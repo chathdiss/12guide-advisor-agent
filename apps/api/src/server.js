@@ -164,7 +164,7 @@ export function createApp(config) {
     const askedCached = config.memory?.findCachedAnswer && !checked.value.fresh && reusable(checked.value);
     if (askedCached) {
       const saved = await config.memory
-        .findCachedAnswer({ question: checked.value.question, customer: checked.value.customer, ifsVersion: checked.value.ifsVersion, language: checked.value.language })
+        .findCachedAnswer({ question: checked.value.question, history: checked.value.history, customer: checked.value.customer, ifsVersion: checked.value.ifsVersion, language: checked.value.language })
         .catch(() => null);
       if (saved) {
         const tokensSaved = estimateSaved(saved.answer);

@@ -105,8 +105,8 @@ export async function findLessons(db, { customer = "", ifsVersion = "", question
 export const findReports = (db, input) => findLessons(db, { ...input, status: "unverified", limit: input.limit ?? 2 });
 
 // A thumbs up or a thumbs down under an answer.
-//   up:   the answer is saved at once and reused for the same question (no review). Only a plain first question of a
-//         chat is saved ("standalone"): a follow-up depends on the conversation. The consultant sees whether it was saved.
+//   up:   the answer is saved at once and reused for the same question (no review), also when it was given in the middle
+//         of a chat (see answer-cache.js: contextOf). Not saved: an answer in a chat with attached files ("hadAttachments").
 //   down: the explanation is stored as unverified, tied to the question and the answer, and the saved answer for this
 //         question, if there is one, is switched off so that it is not returned again.
 // Returns { ok: true, saved?, id? } or { ok: false, error }.
@@ -117,8 +117,12 @@ export async function saveFeedback(db, input) {
   const scope = { customer: cleanScope(input.customer), ifsVersion: cleanScope(input.ifsVersion), language: input.language === "nl" ? "nl" : "en" };
 
   if (rating === "up") {
-    if (input.standalone === false) return { ok: true, saved: false, reason: "follow_up" };
-    const saved = await saveAnswer(db, { ...input, ...scope });
+    if (input.hadAttachments === true) return { ok: true, saved: false, reason: "attachments" };
+    const history = (Array.isArray(input.history) ? input.history : [])
+      .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+      .slice(-40)
+      .map((m) => ({ role: m.role, content: m.content.slice(0, 20_000) }));
+    const saved = await saveAnswer(db, { ...input, history, ...scope });
     return saved.ok ? { ok: true, saved: true, id: saved.id, created: saved.created } : { ok: true, saved: false, reason: saved.reason };
   }
 

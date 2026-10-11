@@ -22,8 +22,8 @@ type Props = {
   // what the answer belongs to: the question asked, and the customer and IFS version of the chat
   question?: string;
   scope?: Scope;
-  // a plain first question of the chat: its answer can be saved for reuse after a thumbs up
-  standalone?: boolean;
+  // what the answer was given in, so a thumbs up can save it for reuse
+  context?: { history: { role: "user" | "assistant"; content: string }[]; hadAttachments: boolean };
   // set on a saved answer that can be replaced by a new one
   onRefresh?: () => void;
 };
@@ -128,7 +128,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-export function MessageItem({ message, showFollowUps = false, onFollowUp, onRetry, onRefresh, question, scope, standalone = false }: Props) {
+export function MessageItem({ message, showFollowUps = false, onFollowUp, onRetry, onRefresh, question, scope, context }: Props) {
   const { t } = useLanguage();
 
   if (message.role === "user") {
@@ -189,7 +189,7 @@ export function MessageItem({ message, showFollowUps = false, onFollowUp, onRetr
 
         <div className="mt-3 -ml-2 flex flex-wrap items-center gap-1">
           <CopyButton text={message.content} />
-          {question && scope && !message.error && <Feedback question={question} message={message} scope={scope} standalone={standalone} />}
+          {question && scope && context && !message.error && <Feedback question={question} message={message} scope={scope} context={context} />}
           {message.cached && (
             <span
               title={t.cachedHint}

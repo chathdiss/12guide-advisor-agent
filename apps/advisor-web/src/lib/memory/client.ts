@@ -82,8 +82,10 @@ export type FeedbackInput = {
   tier?: string;
   tierReason?: string;
   followUps?: string[];
-  // a plain first question of the chat can be saved; a follow-up depends on the conversation
-  standalone: boolean;
+  // what the answer was given in: the messages before the question (a question that leans on them is saved with them),
+  // and whether files were attached anywhere in the chat so far (such an answer is not saved)
+  history: { role: "user" | "assistant"; content: string }[];
+  hadAttachments: boolean;
   // when the answer was itself a saved one
   cacheId?: number;
   // thumbs down: what is wrong, unsupported or missing

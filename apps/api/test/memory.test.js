@@ -192,10 +192,30 @@ describe("memory in the database", { skip: !process.env.DATABASE_URL && "DATABAS
     assert.equal(await ask({ question: `How do I NOT reopen a closed accounting period for ${tag}?` }), null);
   });
 
-  it("does not save a follow-up, an empty answer or a question without a topic", async () => {
-    assert.deepEqual(await up({ standalone: false, question: `follow up ${tag} something` }), { ok: true, saved: false, reason: "follow_up" });
+  it("does not save an empty answer, a question without a topic, or an answer in a chat with attached files", async () => {
     assert.equal((await up({ answer: "short" })).saved, false);
     assert.equal((await up({ question: "how do i" })).saved, false);
+    assert.deepEqual(await up({ hadAttachments: true, question: `attached ${tag} something here` }), { ok: true, saved: false, reason: "attachments" });
+  });
+
+  it("saves an answer given in the middle of a chat: a question that stands on its own is reused anywhere", async () => {
+    const earlier = [{ role: "user", content: "Something else entirely" }, { role: "assistant", content: "Some other answer that was given before." }];
+    const own = `Explain about the closing of financial years for ${tag} in detail`;
+    const saved = await up({ question: own, history: earlier, answer: "Financial years are closed in the Accounting Periods page by a year-end run." });
+    assert.ok(saved.saved);
+    assert.equal((await ask({ question: own })).answer, "Financial years are closed in the Accounting Periods page by a year-end run.", "found as the first question of a new chat");
+    assert.ok(await ask({ question: own, history: earlier }), "and in the middle of another chat");
+  });
+
+  it("ties a question that leans on earlier messages to its conversation", async () => {
+    const chatA = [{ role: "user", content: `How do I reopen a closed accounting period for ${tag}?` }, { role: "assistant", content: "Use the Reopen command on the page." }];
+    const chatB = [{ role: "user", content: `How do I create a voucher type for ${tag}?` }, { role: "assistant", content: "Use the Voucher Types page." }];
+    const followUp = "And what about it in 25R2?";
+    const saved = await up({ question: followUp, history: chatA, answer: "In 25R2 the same command exists, and it also asks for the ledger." });
+    assert.ok(saved.saved);
+    assert.match((await ask({ question: followUp, history: chatA })).answer, /ledger/, "the same earlier question comes first: found");
+    assert.equal(await ask({ question: followUp, history: chatB }), null, "after another conversation: not found");
+    assert.equal(await ask({ question: followUp }), null, "as the first question of a chat: not found");
   });
 
   it("counts a second thumbs up on the same question without making a second copy", async () => {
@@ -335,6 +355,18 @@ describe("saved answers save tokens (end to end)", { skip: !process.env.DATABASE
     assert.ok(hits >= eventsBefore + 2, `hits logged: ${hits}, expected at least ${eventsBefore + 2}`);
   });
 
+  it("thumbs up in the middle of a chat: the answer is saved and shown again, with no AI call", async () => {
+    const earlier = [{ role: "user", content: "Tell me something" }, { role: "assistant", content: "Something that was said before." }];
+    const own = `Explain about the year-end closing for ${tag} step by step`;
+    const saved = await feedback({ rating: "up", question: own, history: earlier, answer: "The year-end closing is run per ledger and creates the closing vouchers." });
+    assert.equal((await saved.json()).saved, true);
+    const before = agent.received.length;
+    const again = await chat({ question: own });
+    assert.match(again.answer, /year-end closing is run per ledger/);
+    assert.equal(again.cached.match, "exact");
+    assert.equal(agent.received.length, before, "no agent call");
+  });
+
   it("calls the agent when the saved answer must not be used", async () => {
     const calls = () => agent.received.length;
     let before = calls();
@@ -347,8 +379,8 @@ describe("saved answers save tokens (end to end)", { skip: !process.env.DATABASE
     await chat({ question: Q, language: "nl" });
     assert.equal(calls(), before + 1, "another language");
     before = calls();
-    await chat({ question: Q, history: [{ role: "user", content: "earlier" }, { role: "assistant", content: "reply" }] });
-    assert.equal(calls(), before + 1, "a follow-up");
+    await chat({ question: "And what about it in the other version?", history: [{ role: "user", content: "earlier" }, { role: "assistant", content: "reply" }] });
+    assert.equal(calls(), before + 1, "a follow-up that nobody saved");
     before = calls();
     await chat({ question: Q, attachments: [{ name: "a.txt", kind: "text", mimeType: "text/plain", data: "x" }] });
     assert.equal(calls(), before + 1, "a question with an attachment");

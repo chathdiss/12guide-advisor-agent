@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { analyze, compare, estimateSaved, reusable } from "../src/answer-cache.js";
+import { analyze, compare, contextOf, estimateSaved, reusable, selfContained } from "../src/answer-cache.js";
 
 const same = (a, b) => compare(analyze(a), analyze(b));
 const matches = (a, b) => same(a, b).match;
@@ -62,11 +62,41 @@ describe("matching questions for saved answers", () => {
     assert.equal(matches("how do i", "how do i"), false, "only stopwords: nothing to compare");
   });
 
-  it("only reuses a plain first question", () => {
+  it("answers from memory in the middle of a chat too, but never a question with attachments or a very long one", () => {
     assert.ok(reusable({ question: "How do I reopen a period?", history: [], attachments: [] }));
-    assert.ok(!reusable({ question: "And in 25R2?", history: [{ role: "user", content: "x" }], attachments: [] }));
+    assert.ok(reusable({ question: "And in 25R2?", history: [{ role: "user", content: "x" }], attachments: [] }));
     assert.ok(!reusable({ question: "What is in this screenshot?", history: [], attachments: [{ name: "a.png" }] }));
     assert.ok(!reusable({ question: "x".repeat(1001), history: [], attachments: [] }), "a long pasted question is too specific");
+  });
+
+  it("knows a question that stands on its own from one that leans on earlier messages", () => {
+    assert.ok(selfContained("Explain about Building a simple AI Assistant for IFS using workflows"));
+    assert.ok(selfContained("How do I reopen a closed accounting period?"));
+    assert.ok(!selfContained("And in 25R2?"), "too few topic words");
+    assert.ok(!selfContained("Explain that again with an example for accounting periods"), "points back with 'that' and 'again'");
+    assert.ok(!selfContained("Kun je dit nog een keer uitleggen voor boekhoudperiodes"), "Dutch pointing word");
+    assert.ok(!selfContained(""));
+  });
+
+  it("gives a question that stands on its own, or opens a chat, no conversation code", () => {
+    const history = [{ role: "user", content: "How do I reopen a closed accounting period?" }, { role: "assistant", content: "Use the page." }];
+    assert.equal(contextOf(history, "How do I reopen a closed accounting period in accrul?"), "");
+    assert.equal(contextOf([], "And in 25R2?"), "");
+    assert.equal(contextOf(undefined, "And in 25R2?"), "");
+  });
+
+  it("ties a question that leans on earlier messages to the earlier questions of that chat, not to the answers", () => {
+    const q = (text) => ({ role: "user", content: text });
+    const a = (text) => ({ role: "assistant", content: text });
+    const one = [q("How do I reopen a closed accounting period?"), a("Answer one.")];
+    const sameQuestionsOtherAnswers = [q("How do I reopen a closed accounting period?"), a("A completely different wording.")];
+    const other = [q("How do I create a voucher type?"), a("Answer one.")];
+    const code = contextOf(one, "And in 25R2?");
+    assert.match(code, /^[0-9a-f]{16}$/);
+    assert.equal(contextOf(sameQuestionsOtherAnswers, "And in 25R2?"), code);
+    assert.notEqual(contextOf(other, "And in 25R2?"), code);
+    // a re-worded earlier question is the same earlier question
+    assert.equal(contextOf([q("how can I reopen the closed accounting period"), a("x")], "And in 25R2?"), code);
   });
 
   it("estimates the tokens a saved answer saves as the prompt plus the answer", () => {

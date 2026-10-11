@@ -12,8 +12,8 @@ type Props = {
   question: string;
   message: Message;
   scope: Scope;
-  // a plain first question of the chat: after a thumbs up its answer is saved and reused for the same question
-  standalone: boolean;
+  // the messages before the question, and whether files were attached in this chat so far
+  context: { history: { role: "user" | "assistant"; content: string }[]; hadAttachments: boolean };
 };
 
 const MIN_CHARS = 8;
@@ -25,7 +25,7 @@ type Done = "saved" | "not-saved" | "reported";
 //   asked later for the same customer and IFS version (the AI is not called then).
 //   Thumbs down: the consultant says what is wrong, unsupported or missing. It is kept with the question and the
 //   answer, helps check later answers, and is not treated as a verified correction.
-export function Feedback({ question, message, scope, standalone }: Props) {
+export function Feedback({ question, message, scope, context }: Props) {
   const { t, lang } = useLanguage();
   const [asking, setAsking] = useState(false);
   const [text, setText] = useState("");
@@ -43,7 +43,8 @@ export function Feedback({ question, message, scope, standalone }: Props) {
     tier: message.tier,
     tierReason: message.tierReason,
     followUps: message.followUps,
-    standalone,
+    history: context.history,
+    hadAttachments: context.hadAttachments,
     cacheId: message.cached?.id,
   };
 

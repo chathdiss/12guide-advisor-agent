@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS memory_answers (
   question_key  TEXT NOT NULL,             -- its content words (stopwords and word endings removed), in order
   answer        TEXT NOT NULL,
   sources       JSONB NOT NULL DEFAULT '[]',
+  context_key   TEXT NOT NULL DEFAULT '',  -- '' for a question that stands on its own, otherwise a code of the earlier questions of the chat
   tier          TEXT,
   tier_reason   TEXT,
   follow_ups    JSONB,
@@ -64,7 +65,10 @@ CREATE TABLE IF NOT EXISTS memory_answers (
   tsv           TSVECTOR GENERATED ALWAYS AS (to_tsvector('simple', question_key)) STORED
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS memory_answers_key_idx ON memory_answers (question_key, lower(customer), lower(ifs_version), language);
+-- Databases made before answers could be saved in the middle of a chat: add the conversation code, and make it part of the key
+ALTER TABLE memory_answers ADD COLUMN IF NOT EXISTS context_key TEXT NOT NULL DEFAULT '';
+DROP INDEX IF EXISTS memory_answers_key_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS memory_answers_ctx_key_idx ON memory_answers (question_key, context_key, lower(customer), lower(ifs_version), language);
 CREATE INDEX IF NOT EXISTS memory_answers_tsv_idx ON memory_answers USING GIN (tsv);
 
 CREATE TABLE IF NOT EXISTS memory_cache_events (

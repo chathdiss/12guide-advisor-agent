@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 // Answers that consultants rated with a thumbs up are kept and reused: when the same or a very similar question
 // is asked again for the same customer, IFS version and language, the saved answer is returned and nothing is
 // sent to an AI model (no keyword rewrite, no agent), which saves the tokens of that answer.
@@ -9,7 +11,11 @@
 //     A short question must match completely: in "reopen a closed period" the one word "reopen" changes the answer.
 //   - codes, numbers and names (ORA-20110, 25R2, CustomerOrderLine, work_task_tab, "quoted text") must be identical
 //   - a question with a negation ("not", "without", "niet") never matches one without
-// Only a first question of a chat is reused: a follow-up depends on the conversation, and attachments are never reused.
+// A thumbs up saves the answer wherever it was given, also in the middle of a chat:
+//   - a question that stands on its own is saved without its conversation and reused anywhere
+//   - a question that leans on earlier messages ("and in 25R2?", "explain it again") is saved together with the earlier
+//     questions of that chat, and reused only when the same earlier questions came before it
+//   - an answer given in a chat with attached files is never saved, and a question with attachments is never answered from memory
 
 export const WORDS_PER_DIFFERENCE = 8;
 const MIN_PAIR_SIMILARITY = 0.4;
@@ -97,12 +103,28 @@ export function compare(a, b, { wordsPerDifference = WORDS_PER_DIFFERENCE } = {}
   return { match: true, exact: false, score };
 }
 
-// Can this request be answered from a saved answer, and can its answer be saved? Only a plain first question.
-export const reusable = ({ question, history, attachments }) =>
-  typeof question === "string" &&
-  question.length <= MAX_QUESTION_CHARS &&
-  (!history || history.length === 0) &&
-  (!attachments || attachments.length === 0);
+// Can this request be answered from a saved answer, and can its answer be saved? Not with attachments, and not a very long question.
+export const reusable = ({ question, attachments }) =>
+  typeof question === "string" && question.length <= MAX_QUESTION_CHARS && (!attachments || attachments.length === 0);
+
+// Words that point back at the conversation: a question with one of them does not stand on its own. Common words such as
+// "it", "that" or the Dutch "het" and "die" count too, which only means such questions are tied to their conversation.
+const REFERENCE = /\b(it|its|this|that|these|those|they|them|their|he|she|above|previous|earlier|before|again|also|same|more|another|other|former|latter|het|dit|dat|deze|die|ze|hen|hun|bovenstaande|vorige|eerder|opnieuw|ook|zelfde|meer|ander|andere)\b/i;
+
+// A question that stands on its own: at least four topic words and nothing that points back at earlier messages
+export const selfContained = (question) => analyze(question).words.length >= 4 && !REFERENCE.test(String(question ?? ""));
+
+// The conversation a saved answer belongs to: "" for a question that stands on its own or opens a chat, otherwise a code
+// of the last six earlier questions of the chat (the answers of the assistant vary, the questions are what was asked).
+export function contextOf(history, question) {
+  if (selfContained(question)) return "";
+  const asked = (Array.isArray(history) ? history : [])
+    .filter((m) => m && m.role === "user" && typeof m.content === "string")
+    .slice(-6)
+    .map((m) => analyze(m.content).key)
+    .filter(Boolean);
+  return asked.length === 0 ? "" : createHash("sha1").update(asked.join("|")).digest("hex").slice(0, 16);
+}
 
 const clip = (value, max) => (typeof value === "string" ? value.trim().slice(0, max) : "");
 const scopeOf = (value) => clip(value, MAX_SCOPE_CHARS);
@@ -128,14 +150,14 @@ function cachedRow(r, how) {
 const COLUMNS = "id, question, question_key, answer, sources, tier, tier_reason, follow_ups, likes, updated_at";
 
 // The best saved answer for a question, or null. The caller treats an error like "no saved answer".
-export async function findCachedAnswer(db, { question, customer = "", ifsVersion = "", language = "en", ttlDays = DEFAULT_TTL_DAYS, wordsPerDifference = WORDS_PER_DIFFERENCE }) {
+export async function findCachedAnswer(db, { question, history = [], customer = "", ifsVersion = "", language = "en", ttlDays = DEFAULT_TTL_DAYS, wordsPerDifference = WORDS_PER_DIFFERENCE }) {
   const asked = analyze(question);
   if (asked.words.length === 0) return null;
-  const scope = [scopeOf(customer).toLowerCase(), scopeOf(ifsVersion).toLowerCase(), languageOf(language), `${Math.max(Number(ttlDays) || DEFAULT_TTL_DAYS, 1)} days`];
-  const inScope = "NOT disabled AND lower(customer) = $1 AND lower(ifs_version) = $2 AND language = $3 AND updated_at > now() - $4::interval";
+  const scope = [scopeOf(customer).toLowerCase(), scopeOf(ifsVersion).toLowerCase(), languageOf(language), `${Math.max(Number(ttlDays) || DEFAULT_TTL_DAYS, 1)} days`, contextOf(history, question)];
+  const inScope = "NOT disabled AND lower(customer) = $1 AND lower(ifs_version) = $2 AND language = $3 AND updated_at > now() - $4::interval AND context_key = $5";
 
   // 1. the same question (up to wording): one index lookup
-  const exact = await db.query(`SELECT ${COLUMNS} FROM memory_answers WHERE ${inScope} AND question_key = $5 ORDER BY likes DESC, updated_at DESC LIMIT 5`, [...scope, asked.key]);
+  const exact = await db.query(`SELECT ${COLUMNS} FROM memory_answers WHERE ${inScope} AND question_key = $6 ORDER BY likes DESC, updated_at DESC LIMIT 5`, [...scope, asked.key]);
   for (const r of exact.rows) {
     if (compare(asked, analyze(r.question), { wordsPerDifference }).match) return cachedRow(r, "exact");
   }
@@ -143,8 +165,8 @@ export async function findCachedAnswer(db, { question, customer = "", ifsVersion
   // 2. a very similar long question: the saved questions that share words, compared one by one
   if (asked.words.length < wordsPerDifference) return null;
   const { rows } = await db.query(
-    `SELECT ${COLUMNS}, ts_rank(tsv, to_tsquery('simple', $5)) AS rank FROM memory_answers
-      WHERE ${inScope} AND tsv @@ to_tsquery('simple', $5) ORDER BY rank DESC LIMIT ${CANDIDATES}`,
+    `SELECT ${COLUMNS}, ts_rank(tsv, to_tsquery('simple', $6)) AS rank FROM memory_answers
+      WHERE ${inScope} AND tsv @@ to_tsquery('simple', $6) ORDER BY rank DESC LIMIT ${CANDIDATES}`,
     [...scope, asked.words.join(" | ")],
   );
   let best = null;
@@ -156,7 +178,7 @@ export async function findCachedAnswer(db, { question, customer = "", ifsVersion
 }
 
 // Saves an answer that got a thumbs up. Returns { ok: true, id, created } or { ok: false, reason }.
-export async function saveAnswer(db, { clientId, question, customer = "", ifsVersion = "", language = "en", answer, sources = [], tier, tierReason, followUps }) {
+export async function saveAnswer(db, { clientId, question, history = [], customer = "", ifsVersion = "", language = "en", answer, sources = [], tier, tierReason, followUps }) {
   const q = clip(question, MAX_QUESTION_CHARS);
   const text = typeof answer === "string" ? answer.trim() : "";
   if (!q) return { ok: false, reason: "no_question" };
@@ -171,9 +193,9 @@ export async function saveAnswer(db, { clientId, question, customer = "", ifsVer
   // The same question again: the saved answer keeps its place and counts the like. A saved answer that was
   // switched off (somebody gave it a thumbs down) is replaced by the new one.
   const { rows } = await db.query(
-    `INSERT INTO memory_answers (customer, ifs_version, language, question, question_key, answer, sources, tier, tier_reason, follow_ups, saved_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11)
-     ON CONFLICT (question_key, lower(customer), lower(ifs_version), language) DO UPDATE SET
+    `INSERT INTO memory_answers (customer, ifs_version, language, question, question_key, answer, sources, tier, tier_reason, follow_ups, saved_by, context_key)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10::jsonb, $11, $12)
+     ON CONFLICT (question_key, context_key, lower(customer), lower(ifs_version), language) DO UPDATE SET
        likes = memory_answers.likes + 1,
        updated_at = now(),
        answer = CASE WHEN memory_answers.disabled THEN EXCLUDED.answer ELSE memory_answers.answer END,
@@ -184,7 +206,7 @@ export async function saveAnswer(db, { clientId, question, customer = "", ifsVer
        dislikes = CASE WHEN memory_answers.disabled THEN 0 ELSE memory_answers.dislikes END,
        disabled = false
      RETURNING id, (xmax = 0) AS created`,
-    [scopeOf(customer), scopeOf(ifsVersion), languageOf(language), q, analyzed.key, text, JSON.stringify(sourceList), ["lite", "full", "super"].includes(tier) ? tier : null, clip(tierReason, 500) || null, follow ? JSON.stringify(follow) : null, clientId ?? null],
+    [scopeOf(customer), scopeOf(ifsVersion), languageOf(language), q, analyzed.key, text, JSON.stringify(sourceList), ["lite", "full", "super"].includes(tier) ? tier : null, clip(tierReason, 500) || null, follow ? JSON.stringify(follow) : null, clientId ?? null, contextOf(history, q)],
   );
   return { ok: true, id: Number(rows[0].id), created: rows[0].created === true };
 }

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useLanguage } from "@/components/language-provider";
 import { useChats } from "@/lib/chat/use-chats";
+import type { Message } from "@/lib/chat/types";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "./brand-mark";
 import { Composer } from "./composer";
@@ -18,6 +19,19 @@ import { ThinkingIndicator } from "./thinking-indicator";
 
 // one icon per example question: configuration, concepts, releases
 const EXAMPLE_ICONS = [Settings2, BookOpen, Rocket];
+
+// What an answer was given in: the messages before its question (as the chat request sent them), and whether files were
+// attached anywhere in the chat so far. A thumbs up uses it to save the answer so that it is reused only when it fits.
+function chatContext(messages: Message[], answerIndex: number) {
+  let question = answerIndex - 1;
+  while (question > 0 && messages[question].role !== "user") question--;
+  const history = messages
+    .slice(0, Math.max(question, 0))
+    .filter((m) => !m.error)
+    .map((m) => ({ role: m.role, content: m.content }));
+  const hadAttachments = messages.slice(0, answerIndex).some((m) => (m.attachments?.length ?? 0) > 0);
+  return { history, hadAttachments };
+}
 
 export function ChatApp() {
   const { lang, t } = useLanguage();
@@ -160,7 +174,7 @@ export function ChatApp() {
                     onRetry={isLast && canRetry ? retryLast : undefined}
                     question={m.role === "assistant" ? messages.slice(0, i).reverse().find((x) => x.role === "user")?.content : undefined}
                     scope={scope}
-                    standalone={i === 1 && !messages[0]?.attachments?.length}
+                    context={m.role === "assistant" ? chatContext(messages, i) : undefined}
                     onRefresh={isLast && canRefresh ? refreshAnswer : undefined}
                   />
                 );
