@@ -263,19 +263,47 @@ export async function searchKnowledge(db, query, { limit = 6, perDocument = 2, c
 
 // Documents whose title is exactly one of the phrases (a question that quotes a title: "Start IFS Cloud
 // Workflow using REST API"). Returns the first chunk of each, in the shape of searchKnowledge.
-export async function findByTitle(db, phrases, { limit = 3 } = {}) {
+export async function findByTitle(db, phrases, { limit = 3, implicit = [], implicitLimit = 2, implicitChunks = 2 } = {}) {
   const wanted = [...new Set(phrases.map((p) => p.trim().toLowerCase()).filter(Boolean))];
-  if (wanted.length === 0) return [];
-  const { rows } = await db.query(
-    `SELECT DISTINCT ON (d.id) c.id, c.content, c.start_line, c.end_line,
-            d.title, d.doc_key, d.origin, d.url, d.version, d.component
-       FROM knowledge_documents d
-       JOIN knowledge_chunks c ON c.document_id = d.id
-      WHERE lower(d.title) = ANY($1)
-      ORDER BY d.id, c.chunk_index
-      LIMIT $2`,
-    [wanted, limit],
-  );
+  const guessed = [...new Set((implicit ?? []).map((p) => p.trim().toLowerCase()).filter(Boolean))];
+  if (wanted.length === 0 && guessed.length === 0) return [];
+  let rows = [];
+  if (wanted.length > 0) {
+    ({ rows } = await db.query(
+      `SELECT DISTINCT ON (d.id) c.id, c.content, c.start_line, c.end_line,
+              d.title, d.doc_key, d.origin, d.url, d.version, d.component
+         FROM knowledge_documents d
+         JOIN knowledge_chunks c ON c.document_id = d.id
+        WHERE lower(d.title) = ANY($1)
+        ORDER BY d.id, c.chunk_index
+        LIMIT $2`,
+      [wanted, limit],
+    ));
+  }
+  // Phrases of the question without quotes (see titleNgrams in apps/api): only a documentation page whose title has
+  // two or more words and is exactly such a phrase counts, with its first chunks, so the page that carries the very
+  // name that was asked about is among the results. Community topics and other sources never count here.
+  if (guessed.length > 0) {
+    const { rows: pages } = await db.query(
+      `SELECT c.id, c.content, c.start_line, c.end_line, c.chunk_index,
+              d.id AS doc_id, d.title, d.doc_key, d.origin, d.url, d.version, d.component
+         FROM knowledge_documents d
+         JOIN knowledge_chunks c ON c.document_id = d.id
+        WHERE d.origin = 'IFS documentation'
+          AND lower(btrim(regexp_replace(d.title, '[^A-Za-z0-9]+', ' ', 'g'))) = ANY($1)
+          AND array_length(string_to_array(btrim(regexp_replace(d.title, '[^A-Za-z0-9]+', ' ', 'g')), ' '), 1) >= 2
+        ORDER BY d.id, c.chunk_index
+        LIMIT $2`,
+      [guessed, implicitLimit * implicitChunks * 3],
+    );
+    const perDoc = new Map();
+    for (const r of pages) {
+      const n = perDoc.get(r.doc_id) ?? 0;
+      if (n >= implicitChunks || (n === 0 && perDoc.size >= implicitLimit)) continue;
+      perDoc.set(r.doc_id, n + 1);
+      if (!rows.some((x) => x.id === r.id)) rows.push(r);
+    }
+  }
   return rows.map((r) => ({
     ref: createHash("sha1").update(`${r.doc_key}#${r.id}`).digest("hex").slice(0, 8),
     title: r.title,

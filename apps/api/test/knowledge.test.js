@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { describe, it } from "node:test";
 import { buildCitations } from "../src/cite.js";
-import { asksAboutCode, createRetriever, quotedPhrases, searchBoth, retrievalQuery } from "../src/knowledge.js";
+import { asksAboutCode, createRetriever, quotedPhrases, searchBoth, retrievalQuery, titleNgrams } from "../src/knowledge.js";
 import { createRewriter, parseRewrite } from "../src/rewrite.js";
 import { createApp } from "../src/server.js";
 
@@ -135,6 +135,42 @@ describe("off-topic follow-up", () => {
     assert.equal(searched, 0);
     await retrieve("and the second step?", history);
     assert.ok(searched > 0);
+  });
+});
+
+describe("phrases of the question that may be a page title", () => {
+  it("turns hyphens and punctuation into spaces and offers groups of two to five words", () => {
+    const p = titleNgrams("What is the high-level architecture of IFS Cloud, and what are the main layers or tiers?");
+    assert.ok(p.includes("high level architecture"));
+    assert.ok(p.includes("architecture of ifs cloud"));
+    assert.ok(p.includes("main layers or tiers"), "a group inside the question is offered when it starts and ends on real words");
+    assert.ok(!p.includes("architecture of"), "a group that ends on a filler word is not offered");
+    assert.ok(!p.includes("of ifs cloud"), "a group that starts with a filler word is not offered");
+  });
+
+  it("offers nothing that starts or ends with a filler word, nor anything shorter than 8 characters", () => {
+    for (const phrase of titleNgrams("how do I set up the IFS.ai Copilot in a test")) {
+      const words = phrase.split(" ");
+      assert.ok(!["a", "an", "the", "of", "to", "in", "how", "do", "i"].includes(words[0]), phrase);
+      assert.ok(!["a", "an", "the", "of", "to", "in", "how", "do", "i"].includes(words.at(-1)), phrase);
+      assert.ok(phrase.length >= 8, phrase);
+    }
+    assert.deepEqual(titleNgrams("hi"), []);
+  });
+
+  it("gives the phrases to the title lookup next to the quoted ones, without changing the quoted ones", async () => {
+    let args = null;
+    const findTitles = async (db, quoted, options) => ((args = { quoted, options }), []);
+    await searchBoth(async () => [], {}, 'explain "Start IFS Cloud Workflow using REST API" and the high-level architecture', 12, null, findTitles);
+    assert.deepEqual(args.quoted, ["Start IFS Cloud Workflow using REST API"]);
+    assert.ok(args.options.implicit.includes("high level architecture"));
+  });
+
+  it("puts a page whose title is in the question first", async () => {
+    const page = { ref: "p1", title: "High Level Architecture", path: "p", origin: "IFS documentation", startLine: 1, content: "x" };
+    const other = { ref: "o1", title: "Logical Architecture", path: "o", origin: "IFS documentation", startLine: 1, content: "y" };
+    const out = await searchBoth(async () => [other], {}, "high-level architecture of IFS Cloud", 12, null, async () => [page]);
+    assert.deepEqual(out.map((r) => r.ref), ["p1", "o1"]);
   });
 });
 

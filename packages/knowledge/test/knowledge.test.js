@@ -6,7 +6,7 @@ import { describe, it } from "node:test";
 import { chunkText } from "../src/chunk.js";
 import { splitIdentifiers } from "../src/identifiers.js";
 import { prepareDocument } from "../src/prepare.js";
-import { blendedCoverage, candidateTerms, findByName, inflections, loadDocumentTexts, namePhrases, searchKnowledge, sizeFactor, sourceWeight, titleIsAsked } from "../src/search.js";
+import { blendedCoverage, candidateTerms, findByName, findByTitle, inflections, loadDocumentTexts, namePhrases, searchKnowledge, sizeFactor, sourceWeight, titleIsAsked } from "../src/search.js";
 import { walkIfsSource } from "../src/sources/ifs-source.js";
 
 const plsql = (n) =>
@@ -394,6 +394,46 @@ describe("ranking by how many of the words a chunk has", () => {
     assert.ok(score(normal, "Delivery Continuity Tools") > score(normal, "VoucherHandling.plsvc"), "the documentation has the lead by default");
     const forCode = await searchKnowledge(fake([page, file]), "validates posts supplier invoice", { preferCode: true });
     assert.equal(score(forCode, "VoucherHandling.plsvc"), score(forCode, "Delivery Continuity Tools"), "the code is as good as the page");
+  });
+});
+
+describe("pages whose title is in the question", () => {
+  const row = (id, doc, title, chunk = 0) => ({ id, doc_id: doc, chunk_index: chunk, content: "text " + id, start_line: 1, end_line: 5, title, doc_key: "k" + doc, origin: "IFS documentation", url: "https://x/" + doc, version: "IFS Cloud 25R2", component: null });
+  const fakeDb = (pages) => ({
+    calls: [],
+    async query(sql, params) {
+      this.calls.push({ sql, params });
+      return { rows: /regexp_replace/.test(sql) ? pages : [] };
+    },
+  });
+
+  it("asks nothing when there are no phrases at all", async () => {
+    const db = fakeDb([]);
+    assert.deepEqual(await findByTitle(db, [], { implicit: [] }), []);
+    assert.equal(db.calls.length, 0);
+  });
+
+  it("takes only documentation pages with a title of two or more words, and compares titles without punctuation", async () => {
+    const db = fakeDb([]);
+    await findByTitle(db, [], { implicit: ["High Level Architecture"] });
+    assert.deepEqual(db.calls[0].params[0], ["high level architecture"]);
+    assert.match(db.calls[0].sql, /origin = 'IFS documentation'/);
+    assert.match(db.calls[0].sql, /regexp_replace\(d\.title, '\[\^A-Za-z0-9\]\+', ' ', 'g'\)/);
+    assert.match(db.calls[0].sql, />= 2/);
+  });
+
+  it("returns the first two chunks of at most two pages, as results with the top score", async () => {
+    const db = fakeDb([row(1, 10, "High Level Architecture", 0), row(2, 10, "High Level Architecture", 1), row(3, 10, "High Level Architecture", 2), row(4, 11, "Logical Architecture"), row(5, 12, "Physical Architecture")]);
+    const found = await findByTitle(db, [], { implicit: ["high level architecture", "logical architecture"] });
+    assert.deepEqual(found.map((f) => f.title), ["High Level Architecture", "High Level Architecture", "Logical Architecture"]);
+    assert.ok(found.every((f) => f.score === 100 && f.origin === "IFS documentation" && f.url));
+  });
+
+  it("keeps working with quoted titles only, as before", async () => {
+    const db = fakeDb([]);
+    await findByTitle(db, ["Start IFS Cloud Workflow using REST API"]);
+    assert.equal(db.calls.length, 1);
+    assert.deepEqual(db.calls[0].params[0], ["start ifs cloud workflow using rest api"]);
   });
 });
 

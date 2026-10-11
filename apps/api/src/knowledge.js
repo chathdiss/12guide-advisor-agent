@@ -19,6 +19,25 @@ export function retrievalQuery(question, history = []) {
 const chunkKey = (r) => r.ref ?? `${r.path}:${r.startLine}:${r.content}`;
 export const quotedPhrases = (text) => [...text.matchAll(/["“”']([^"“”']{6,200})["“”']/g)].map((m) => m[1]);
 
+// A phrase without quotes can be a title as well: "high-level architecture" is the page "High Level Architecture",
+// yet the pages that talk most about layers and tiers would otherwise rank above it. These are the groups of 2 to 5
+// words of the question (hyphens and punctuation count as spaces) that neither start nor end with a filler word;
+// the database keeps only those that are exactly the title of a documentation page.
+const FILLER = new Set("a an the and or of to in on for with is are was were be how do does did can could should would what which who when where why i we you it this that these those my our your me about from into by as at if then than so there here not no".split(" "));
+export function titleNgrams(text, { maxWords = 5, max = 40 } = {}) {
+  const words = String(text ?? "").toLowerCase().match(/[a-z0-9]+/g) ?? [];
+  const out = new Set();
+  for (let size = 2; size <= maxWords; size++) {
+    for (let i = 0; i + size <= words.length; i++) {
+      const group = words.slice(i, i + size);
+      if (FILLER.has(group[0]) || FILLER.has(group[size - 1])) continue;
+      const phrase = group.join(" ");
+      if (phrase.length >= 8) out.add(phrase);
+    }
+  }
+  return [...out].slice(0, max);
+}
+
 // A question about code ("source code", PL/SQL, a file, a method) also gets a search in the code alone: the
 // general words of such a question ("files", "methods") otherwise pull in documentation first.
 export const asksAboutCode = (text) =>
@@ -29,7 +48,7 @@ export async function searchBoth(search, db, query, limit, keywords, findTitles 
   // the searches are independent: run them side by side
   const aboutCode = asksAboutCode(query);
   const [titled, exact, widened, code, named] = await Promise.all([
-    findTitles ? findTitles(db, quotedPhrases(query)) : [],
+    findTitles ? findTitles(db, quotedPhrases(query), { implicit: titleNgrams(query) }) : [],
     search(db, query, { limit, preferCode: aboutCode }),
     keywords?.length ? search(db, query, { limit, keywords, preferCode: aboutCode }) : [],
     // the code is searched with the words of the question: synonyms ("accrual accounting") only dilute the names of code
