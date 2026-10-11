@@ -29,6 +29,12 @@ The models are set in one place, at the top of the **Complexity router** node. I
 
 The Claude node must be version **1.5 or newer**, which is where the `Thinking Mode` setting appears: older versions always send a `thinking` setting that the newest Claude models reject.
 
+## Answering later (long answers)
+
+A complete answer takes a minute or more, but a gateway in front of a shared n8n server may cut a request after about 60 seconds. So the workflow can answer in two steps. When the request has a `callbackUrl` (the backend adds a one-time return address when it knows its public address), the node **Accept request** replies `{"accepted": true}` at once, and the run continues. When the answer is ready, **Send answer** posts it to the `callbackUrl` with the `X-Internal-Key` header; if the agent fails, **Failure answer** posts an error instead, so nobody waits for nothing. Without a `callbackUrl` the workflow answers at once, as before.
+
+After importing, open **Send answer** and select the same Header Auth credential as the Webhook node (`Advisor – internal key`). The nodes **Answer later?** and **Deliver later?** only choose between the two ways.
+
 ## How a question flows
 
 `Webhook → Build prompt → Complexity router → Advisor Agent (Claude) → Format response → Respond to Webhook`

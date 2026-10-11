@@ -47,7 +47,8 @@
       "position": [
         660,
         0
-      ]
+      ],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -93,8 +94,8 @@
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        1240,
-        0
+        1460,
+        180
       ]
     },
     {
@@ -109,6 +110,127 @@
         440,
         0
       ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "a8888888-cond",
+              "leftValue": "={{ !!$json.body.callbackUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a8888888-8888-4888-8888-888888888888",
+      "name": "Answer later?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        110,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ accepted: true }) }}",
+        "options": {}
+      },
+      "id": "b9999999-9999-4999-8999-999999999999",
+      "name": "Accept request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        330,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// The agent failed (for example the model was unavailable): tell whoever waits for the answer\nconst e = $input.first().json.error;\nconst text = typeof e === 'string' ? e : (e && e.message) || 'unknown error';\nreturn [{ json: { error: 'The advisor agent failed: ' + text } }];"
+      },
+      "id": "caaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "name": "Failure answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1020,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dbbbbbbb-cond",
+              "leftValue": "={{ !!$('Webhook').first().json.body.callbackUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "dbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "name": "Deliver later?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1240,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook').first().json.body.callbackUrl }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "name": "Send answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1460,
+        -180
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
     }
   ],
   "connections": {
@@ -116,7 +238,7 @@
       "main": [
         [
           {
-            "node": "Build prompt",
+            "node": "Answer later?",
             "type": "main",
             "index": 0
           }
@@ -153,6 +275,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Failure answer",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -160,7 +289,7 @@
       "main": [
         [
           {
-            "node": "Respond to Webhook",
+            "node": "Deliver later?",
             "type": "main",
             "index": 0
           }
@@ -172,6 +301,64 @@
         [
           {
             "node": "Advisor Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer later?": {
+      "main": [
+        [
+          {
+            "node": "Accept request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Accept request": {
+      "main": [
+        [
+          {
+            "node": "Build prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failure answer": {
+      "main": [
+        [
+          {
+            "node": "Deliver later?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deliver later?": {
+      "main": [
+        [
+          {
+            "node": "Send answer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook",
             "type": "main",
             "index": 0
           }

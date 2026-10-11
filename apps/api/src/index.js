@@ -15,6 +15,10 @@ const config = {
   customers: list(process.env.MEMORY_CUSTOMERS),
   versions: list(process.env.MEMORY_VERSIONS, ["IFS Apps 10", "IFS Cloud 23R2", "IFS Cloud 24R1", "IFS Cloud 24R2", "IFS Cloud 25R1", "IFS Cloud 25R2", "IFS Cloud 26R1"]),
   reviewKey: process.env.REVIEW_API_KEY || "",
+  // websites that may call this backend from the browser, for example https://12guide-assistant-test.netlify.app
+  corsOrigins: list(process.env.CORS_ORIGINS),
+  // this backend's own public address: n8n posts finished answers to it. Render sets RENDER_EXTERNAL_URL itself.
+  publicUrl: process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || "",
 };
 
 function list(value, fallback = []) {

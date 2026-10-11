@@ -3,7 +3,8 @@ import { cleanAgentResponse } from "./validate.js";
 const DEFAULT_TIMEOUT_MS = 600_000; // complete answers are long: the model may write for several minutes
 
 // Sends one question to the Advisor agent (the n8n webhook) and returns either
-// { ok: true, value } with the cleaned answer, or { ok: false, status, code, error }.
+// { ok: true, value } with the cleaned answer, { ok: true, accepted: true } when n8n took the question and will post the
+// answer to the callbackUrl later (see pending.js), or { ok: false, status, code, error }.
 export async function askAgent(payload, { url, internalKey, timeoutMs = DEFAULT_TIMEOUT_MS, fetchImpl = fetch }) {
   if (!url) {
     return fail(500, "not_configured", "N8N_CHAT_URL is not configured on the server.");
@@ -43,6 +44,8 @@ export async function askAgent(payload, { url, internalKey, timeoutMs = DEFAULT_
   } catch {
     // handled below
   }
+  // a workflow that answers later replies at once with { accepted: true } and no answer
+  if (data && data.accepted === true && typeof data.answer !== "string") return { ok: true, accepted: true };
   const value = cleanAgentResponse(data);
   if (!value) {
     return fail(

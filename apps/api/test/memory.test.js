@@ -326,7 +326,13 @@ describe("saved answers save tokens (end to end)", { skip: !process.env.DATABASE
 
     const stats = await (await call(api.base, "GET", "/api/memory/stats?days=1", { headers: { "x-review-key": KEY } })).json();
     assert.ok(stats.hits >= 2 && stats.estimatedTokensSaved >= 2 * 6000, JSON.stringify(stats));
-    assert.ok((await db.query("SELECT count(*)::int AS n FROM memory_cache_events WHERE outcome = 'hit'")).rows[0].n >= eventsBefore + 2);
+    // the backend writes the log row without waiting for it, so give the database a moment
+    let hits = 0;
+    for (let i = 0; i < 50 && hits < eventsBefore + 2; i++) {
+      hits = (await db.query("SELECT count(*)::int AS n FROM memory_cache_events WHERE outcome = 'hit'")).rows[0].n;
+      if (hits < eventsBefore + 2) await new Promise((r) => setTimeout(r, 40));
+    }
+    assert.ok(hits >= eventsBefore + 2, `hits logged: ${hits}, expected at least ${eventsBefore + 2}`);
   });
 
   it("calls the agent when the saved answer must not be used", async () => {

@@ -1,23 +1,46 @@
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { createServer } from "node:http";
 import { askAgent } from "./agent.js";
 import { estimateSaved, reusable } from "./answer-cache.js";
 import { buildCitations, repairCitations } from "./cite.js";
 import { createRateLimiter } from "./rate-limit.js";
-import { validateChatRequest } from "./validate.js";
+import { createPendingAnswers } from "./pending.js";
+import { cleanAgentResponse, validateChatRequest } from "./validate.js";
 
 const MEMORY_MAX_BODY_BYTES = 3 * 1024 * 1024; // a stored chat, a lesson
 const DEFAULT_MAX_BODY_BYTES = 30 * 1024 * 1024; // up to 4 images of about 6 MB each, as base64
 
 // config: { n8nChatUrl, internalKey, rateLimitPerMinute, agentTimeoutMs, maxBodyBytes, fetchImpl, retrieve,
-//           memory (see memory.js: createMemory), reviewKey, customers, versions }
+//           memory (see memory.js: createMemory), reviewKey, customers, versions,
+//           corsOrigins: addresses of websites that may call this backend from the browser,
+//           publicUrl: this backend's own public address; with it the agent may deliver an answer later (pending.js) }
 // retrieve(question, history) searches the knowledge base: { status: "ok" | "unavailable", passages }
 export function createApp(config) {
   const maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const limiter = createRateLimiter({ limit: config.rateLimitPerMinute ?? 30 });
+  const pending = createPendingAnswers();
+  const publicUrl = String(config.publicUrl ?? "").trim().replace(/\/+$/, "");
+
+  // A complete answer takes a minute or more, longer than a website host (such as Netlify) keeps a forwarded request
+  // open, so the website can call this backend directly. The browser then needs the backend's permission (CORS) for
+  // the websites listed in corsOrigins; every other website gets no permission.
+  const corsOrigins = new Set((config.corsOrigins ?? []).map((o) => String(o).trim().replace(/\/+$/, "")));
 
   const server = createServer(async (req, res) => {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
+
+    const origin = String(req.headers.origin ?? "");
+    if (origin && corsOrigins.has(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, X-Client-Id, X-Review-Key");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Max-Age", "600");
+    }
+    if (req.method === "OPTIONS") {
+      res.writeHead(corsOrigins.has(origin) ? 204 : 403);
+      return res.end();
+    }
 
     if (path === "/api/health" && req.method === "GET") {
       return sendJson(res, 200, { status: "ok" });
@@ -26,6 +49,18 @@ export function createApp(config) {
     if (path === "/api/chat") {
       if (req.method !== "POST") return sendJson(res, 405, { error: "Use POST.", code: "invalid_request" });
       return handleChat(req, res);
+    }
+
+    // n8n posts a finished answer here (see pending.js); only n8n knows the key and the one-time id
+    if (path.startsWith("/api/internal/answer/")) {
+      if (req.method !== "POST") return sendJson(res, 405, { error: "Use POST.", code: "invalid_request" });
+      if (config.internalKey && !sameSecret(String(req.headers["x-internal-key"] ?? ""), config.internalKey)) {
+        return sendJson(res, 401, { error: "Wrong key.", code: "unauthorized" });
+      }
+      const id = decodeURIComponent(path.slice("/api/internal/answer/".length));
+      const body = await readJson(req, maxBodyBytes);
+      if (!body.ok) return sendJson(res, body.status, { error: body.error, code: body.code });
+      return pending.deliver(id, body.value) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "Nobody is waiting for this answer.", code: "invalid_request" });
     }
 
     if (path.startsWith("/api/memory/")) {
@@ -164,12 +199,38 @@ export function createApp(config) {
       ? await config.memory.findReports({ customer: checked.value.customer, ifsVersion: checked.value.ifsVersion, question: checked.value.question }).catch(() => [])
       : [];
 
-    const result = await askAgent({ ...checked.value, knowledge: knowledge.status, passages: knowledge.passages, lessons, reports }, {
-      url: config.n8nChatUrl,
-      internalKey: config.internalKey,
-      timeoutMs: config.agentTimeoutMs,
-      fetchImpl: config.fetchImpl,
-    });
+    // With a public address, the agent may answer later: it gets a one-time return address, and the answer is awaited
+    // here while the browser's request stays open. A workflow that answers at once works as before.
+    const requestId = publicUrl ? randomUUID() : "";
+    const waiter = requestId ? pending.expect(requestId) : null;
+    let result = await askAgent(
+      {
+        ...checked.value,
+        knowledge: knowledge.status,
+        passages: knowledge.passages,
+        lessons,
+        reports,
+        ...(requestId ? { callbackUrl: `${publicUrl}/api/internal/answer/${requestId}` } : {}),
+      },
+      {
+        url: config.n8nChatUrl,
+        internalKey: config.internalKey,
+        timeoutMs: config.agentTimeoutMs,
+        fetchImpl: config.fetchImpl,
+      },
+    );
+    if (result.ok && result.accepted) {
+      const delivered = await waiter.wait(config.agentTimeoutMs ?? 600_000);
+      const value = delivered === null ? null : cleanAgentResponse(delivered);
+      result =
+        delivered === null
+          ? { ok: false, status: 504, code: "too_slow", error: "The advisor took too long to respond." }
+          : value
+            ? { ok: true, value }
+            : { ok: false, status: 502, code: "no_answer", error: "The n8n workflow did not return an answer. Check the Executions tab in n8n for the failing node." };
+    } else {
+      waiter?.cancel();
+    }
 
     if (!result.ok) {
       log({ status: result.status, code: result.code, ms: Date.now() - started });
