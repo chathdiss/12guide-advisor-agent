@@ -12,6 +12,10 @@ export type AttachmentProblem =
   | { kind: "unreadableImage"; file: string }
   | { kind: "binaryFile"; file: string }
   | { kind: "textTooLong"; file: string; max: number }
+  | { kind: "documentTooBig"; file: string }
+  | { kind: "unreadableDocument"; file: string }
+  | { kind: "noText"; file: string }
+  | { kind: "oldWord"; file: string }
   | { kind: "unsupported"; file: string };
 
 // Error codes returned by /api/chat
@@ -184,7 +188,7 @@ export const STRINGS: Record<Lang, Strings> = {
         case "invalid_request":
           return "The request was not valid.";
         case "attachments_invalid":
-          return "The attachments are not valid. Use up to 4 images or text files within the size limits.";
+          return "The attachments are not valid. Use up to 4 images, Word, PDF or text files within the size limits.";
         case "not_found":
           return "The n8n webhook was not found. Is the workflow active and does the URL match?";
         case "no_answer":
@@ -213,8 +217,16 @@ export const STRINGS: Record<Lang, Strings> = {
           return `${p.file}: this looks like a binary file, not text.`;
         case "textTooLong":
           return `${p.file}: the file is too long (maximum ${num(p.max, "en")} characters).`;
+        case "documentTooBig":
+          return `${p.file}: the file is larger than 25 MB.`;
+        case "unreadableDocument":
+          return `${p.file}: this document could not be read. It may be damaged or protected with a password.`;
+        case "noText":
+          return `${p.file}: no text was found in this document. A scanned PDF has no text layer: attach it as images or use a version with text.`;
+        case "oldWord":
+          return `${p.file}: old Word files (.doc) cannot be read. Save the document as .docx and attach that.`;
         case "unsupported":
-          return `${p.file}: not supported yet. Attach images or text files (txt, md, csv, json, xml, log, sql, yaml).`;
+          return `${p.file}: not supported yet. Attach images, Word (docx) or PDF files, or text files (txt, md, csv, json, xml, log, sql, yaml).`;
       }
     },
   },
@@ -299,7 +311,7 @@ export const STRINGS: Record<Lang, Strings> = {
         case "invalid_request":
           return "Het verzoek was ongeldig.";
         case "attachments_invalid":
-          return "De bijlagen zijn ongeldig. Gebruik maximaal 4 afbeeldingen of tekstbestanden binnen de groottelimieten.";
+          return "De bijlagen zijn ongeldig. Gebruik maximaal 4 afbeeldingen, Word-, pdf- of tekstbestanden binnen de groottelimieten.";
         case "not_found":
           return "De n8n-webhook is niet gevonden. Is de workflow actief en klopt de URL?";
         case "no_answer":
@@ -328,8 +340,16 @@ export const STRINGS: Record<Lang, Strings> = {
           return `${p.file}: dit lijkt een binair bestand, geen tekst.`;
         case "textTooLong":
           return `${p.file}: het bestand is te lang (maximaal ${num(p.max, "nl")} tekens).`;
+        case "documentTooBig":
+          return `${p.file}: het bestand is groter dan 25 MB.`;
+        case "unreadableDocument":
+          return `${p.file}: dit document kon niet worden gelezen. Het is mogelijk beschadigd of met een wachtwoord beveiligd.`;
+        case "noText":
+          return `${p.file}: er is geen tekst gevonden in dit document. Een gescande pdf heeft geen tekstlaag: voeg het toe als afbeeldingen of gebruik een versie met tekst.`;
+        case "oldWord":
+          return `${p.file}: oude Word-bestanden (.doc) kunnen niet worden gelezen. Sla het document op als .docx en voeg dat toe.`;
         case "unsupported":
-          return `${p.file}: wordt nog niet ondersteund. Voeg afbeeldingen of tekstbestanden toe (txt, md, csv, json, xml, log, sql, yaml).`;
+          return `${p.file}: wordt nog niet ondersteund. Voeg afbeeldingen, Word- (docx) of pdf-bestanden toe, of tekstbestanden (txt, md, csv, json, xml, log, sql, yaml).`;
       }
     },
   },

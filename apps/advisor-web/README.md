@@ -25,7 +25,11 @@ Quick alternative without the backend: leave `API_URL` unset, copy `.env.example
 - Chat with a sidebar of earlier chats, grouped by date, with search, rename and delete.
 - English / Dutch switch: the whole interface and the answers follow the chosen language.
 - Light, dark or system theme.
-- Attach up to 4 images or text files (drag, paste or pick); screenshots are read by the model.
+- Attach up to 4 files (drag, paste or pick): images (screenshots are read by the model), text files, **Word (.docx)** and **PDF**.
+  A Word or PDF file is read in the browser and sent as text, so the backend and the n8n workflow are unchanged:
+  Word goes through [mammoth](https://github.com/mwilliamson/mammoth.js) (to HTML, then to compact text that keeps headings, lists and table rows; pictures are left out),
+  a PDF through pdf.js (text per page, marked `[Page n]`). Both libraries load only when such a file is attached. Limits: 25 MB per file and 200,000 characters of text.
+  Old `.doc` files and scanned PDFs without a text layer are refused with a message that says what to do.
 - Each answer shows the tier the router chose (Lite / Full / Super), can be copied, and suggests follow-up questions.
 - Failed answers show an error with a Try again button.
 
@@ -42,7 +46,8 @@ Forwarded requests wait up to 2 minutes (`experimental.proxyTimeout`). Next.js w
 - `src/app`: page, layout, global styles and the `/api/chat` route
 - `src/components/chat`: sidebar, messages, message box, header controls
 - `src/components/ui`: shadcn/ui building blocks
-- `src/lib/chat`: chat state, attachment handling, shared types
+- `src/lib/chat`: chat state, attachment handling (`documents.ts` reads Word and PDF), shared types
+- `test/`: `npm test` (HTML-to-text conversion and a Word fixture)
 - `src/lib/i18n.ts`: all interface texts in English and Dutch
 
 ## Not built yet

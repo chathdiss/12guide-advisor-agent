@@ -1,5 +1,6 @@
 import type { AttachmentProblem } from "../i18n";
 import { MAX_TEXT_CHARS } from "./api-types";
+import { DocumentError, docxToText, pdfToText } from "./documents";
 import type { AttachmentMeta } from "./types";
 
 export type PendingAttachment = AttachmentMeta & { data: string };
@@ -13,6 +14,7 @@ export class AttachmentError extends Error {
 }
 
 const MAX_IMAGE_INPUT_BYTES = 15 * 1024 * 1024;
+const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024; // a Word or PDF file; what is sent is only its text
 const MAX_IMAGE_EDGE = 1568; // larger images gain nothing, they just cost tokens
 const THUMB_EDGE = 96;
 
@@ -21,7 +23,8 @@ const TEXT_EXTENSIONS = new Set([
   "txt", "md", "csv", "json", "xml", "log", "sql", "yaml", "yml", "html", "htm", "ini", "properties",
 ]);
 
-export const ACCEPT = [...IMAGE_TYPES, ...[...TEXT_EXTENSIONS].map((e) => `.${e}`)].join(",");
+const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+export const ACCEPT = [...IMAGE_TYPES, ...[...TEXT_EXTENSIONS].map((e) => `.${e}`), ".docx", ".pdf", DOCX_TYPE, "application/pdf"].join(",");
 
 const uid = () => crypto.randomUUID();
 
@@ -69,9 +72,30 @@ async function processText(file: File): Promise<PendingAttachment> {
   return { id: uid(), name: file.name, kind: "text", mimeType: file.type || "text/plain", size: file.size, data: text };
 }
 
+// A Word or PDF file is read here in the browser and sent as the text it contains, like any text file
+async function processDocument(file: File, kind: "docx" | "pdf"): Promise<PendingAttachment> {
+  if (file.size > MAX_DOCUMENT_BYTES) throw new AttachmentError({ kind: "documentTooBig", file: file.name });
+  let text: string;
+  try {
+    const buffer = await file.arrayBuffer();
+    text = kind === "docx" ? await docxToText(buffer) : await pdfToText(buffer, MAX_TEXT_CHARS);
+  } catch (err) {
+    if (err instanceof DocumentError) {
+      if (err.reason === "tooLong") throw new AttachmentError({ kind: "textTooLong", file: file.name, max: MAX_TEXT_CHARS });
+      throw new AttachmentError({ kind: err.reason === "noText" ? "noText" : "unreadableDocument", file: file.name });
+    }
+    throw new AttachmentError({ kind: "unreadableDocument", file: file.name });
+  }
+  if (text.length > MAX_TEXT_CHARS) throw new AttachmentError({ kind: "textTooLong", file: file.name, max: MAX_TEXT_CHARS });
+  return { id: uid(), name: file.name, kind: "text", mimeType: file.type || (kind === "pdf" ? "application/pdf" : DOCX_TYPE), size: file.size, data: text };
+}
+
 export async function processFile(file: File): Promise<PendingAttachment> {
   const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (IMAGE_TYPES.has(file.type)) return processImage(file);
+  if (ext === "docx" || file.type === DOCX_TYPE) return processDocument(file, "docx");
+  if (ext === "pdf" || file.type === "application/pdf") return processDocument(file, "pdf");
+  if (ext === "doc") throw new AttachmentError({ kind: "oldWord", file: file.name });
   if (file.type.startsWith("text/") || file.type === "application/json" || TEXT_EXTENSIONS.has(ext)) {
     return processText(file);
   }
