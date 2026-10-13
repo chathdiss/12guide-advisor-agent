@@ -76,6 +76,55 @@ export async function searchBoth(search, db, query, limit, keywords, findTitles 
   return out;
 }
 
+// Turns search results into the passages that are sent to the agent: a whole short document, or the part of a long one
+// around the match, within a total number of characters. `full` is the Map of whole texts of web documents (loadFull).
+export function buildPassages(found, full = new Map(), { budget = MAX_TOTAL_CHARS } = {}) {
+  const passages = [];
+  const seen = new Set(); // short documents, already included in full
+  const covered = new Map(); // long documents: the last line of the part already included
+  for (const r of found) {
+    if (budget <= 0) break;
+    const text = r.url ? full.get(r.path) : null;
+    let content = r.content.slice(0, MAX_PASSAGE_CHARS);
+    let startLine = r.startLine;
+    let endLine = r.endLine;
+    if (text && text.length <= MAX_TOPIC_CHARS) {
+      // a community topic, a blog post, a documentation page: the whole of it
+      if (seen.has(r.path)) continue;
+      seen.add(r.path);
+      content = text;
+      startLine = 1;
+      endLine = text.split("\n").length;
+    } else if (text) {
+      // a long document (a guide of hundreds of pages): the part around the match, not its beginning
+      if (r.startLine <= (covered.get(r.path) ?? 0)) continue;
+      const lines = text.split("\n");
+      const from = Math.max(0, r.startLine - 4);
+      let to = from;
+      let used = 0;
+      while (to < lines.length && used + lines[to].length + 1 <= MAX_TOPIC_CHARS) used += lines[to++].length + 1;
+      content = lines.slice(from, to).join("\n");
+      startLine = from + 1;
+      endLine = to;
+      covered.set(r.path, to);
+    }
+    content = content.slice(0, budget);
+    budget -= content.length;
+    passages.push({
+      id: passages.length + 1,
+      title: r.title,
+      path: r.path,
+      origin: r.origin,
+      url: r.url || "",
+      version: `${r.component} ${r.version}`.trim(),
+      startLine,
+      endLine,
+      content,
+    });
+  }
+  return passages;
+}
+
 // Returns a function (question, history) => { status: "ok" | "unavailable", passages }
 // `rewrite` (optional) turns the question into keywords first; when it gives nothing, the search
 // uses the words of the question as before. `loadFull` (optional) gives the whole text of web
@@ -92,50 +141,7 @@ export function createRetriever({ db, search, rewrite = null, loadFull = null, f
       const found = await searchBoth(search, db, query, limit, rewritten?.keywords ?? null, findTitles, findNames);
       const full = loadFull ? await loadFull(db, found.filter((r) => r.url).map((r) => r.path)) : new Map();
 
-      const passages = [];
-      const seen = new Set(); // short documents, already included in full
-      const covered = new Map(); // long documents: the last line of the part already included
-      let budget = MAX_TOTAL_CHARS;
-      for (const r of found) {
-        if (budget <= 0) break;
-        const text = r.url ? full.get(r.path) : null;
-        let content = r.content.slice(0, MAX_PASSAGE_CHARS);
-        let startLine = r.startLine;
-        let endLine = r.endLine;
-        if (text && text.length <= MAX_TOPIC_CHARS) {
-          // a community topic, a blog post, a documentation page: the whole of it
-          if (seen.has(r.path)) continue;
-          seen.add(r.path);
-          content = text;
-          startLine = 1;
-          endLine = text.split("\n").length;
-        } else if (text) {
-          // a long document (a guide of hundreds of pages): the part around the match, not its beginning
-          if (r.startLine <= (covered.get(r.path) ?? 0)) continue;
-          const lines = text.split("\n");
-          const from = Math.max(0, r.startLine - 4);
-          let to = from;
-          let used = 0;
-          while (to < lines.length && used + lines[to].length + 1 <= MAX_TOPIC_CHARS) used += lines[to++].length + 1;
-          content = lines.slice(from, to).join("\n");
-          startLine = from + 1;
-          endLine = to;
-          covered.set(r.path, to);
-        }
-        content = content.slice(0, budget);
-        budget -= content.length;
-        passages.push({
-          id: passages.length + 1,
-          title: r.title,
-          path: r.path,
-          origin: r.origin,
-          url: r.url || "",
-          version: `${r.component} ${r.version}`.trim(),
-          startLine,
-          endLine,
-          content,
-        });
-      }
+      const passages = buildPassages(found, full);
       return { status: "ok", passages };
     } catch (err) {
       console.error(JSON.stringify({ time: new Date().toISOString(), knowledge: "unavailable", error: String(err?.message ?? err) }));

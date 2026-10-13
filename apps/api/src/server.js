@@ -3,7 +3,9 @@ import { createServer } from "node:http";
 import { askAgent } from "./agent.js";
 import { estimateSaved, reusable } from "./answer-cache.js";
 import { buildCitations, repairCitations } from "./cite.js";
+import { createEvidence } from "./evidence.js";
 import { createRateLimiter } from "./rate-limit.js";
+import { formatToolResult } from "./tools.js";
 import { createPendingAnswers } from "./pending.js";
 import { cleanAgentResponse, validateChatRequest } from "./validate.js";
 
@@ -15,10 +17,12 @@ const DEFAULT_MAX_BODY_BYTES = 30 * 1024 * 1024; // up to 4 images of about 6 MB
 //           corsOrigins: addresses of websites that may call this backend from the browser,
 //           publicUrl: this backend's own public address; with it the agent may deliver an answer later (pending.js) }
 // retrieve(question, history) searches the knowledge base: { status: "ok" | "unavailable", passages }
+// tools (see tools.js) are the search tools the agent may call while it works; they need publicUrl as well, because n8n calls them
 export function createApp(config) {
   const maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const limiter = createRateLimiter({ limit: config.rateLimitPerMinute ?? 30 });
   const pending = createPendingAnswers();
+  const evidence = createEvidence({ maxToolCalls: config.maxToolCalls ?? 6 });
   const publicUrl = String(config.publicUrl ?? "").trim().replace(/\/+$/, "");
 
   // A complete answer takes a minute or more, longer than a website host (such as Netlify) keeps a forwarded request
@@ -61,6 +65,15 @@ export function createApp(config) {
       const body = await readJson(req, maxBodyBytes);
       if (!body.ok) return sendJson(res, body.status, { error: body.error, code: body.code });
       return pending.deliver(id, body.value) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "Nobody is waiting for this answer.", code: "invalid_request" });
+    }
+
+    // the agent's search tools (see tools.js): n8n calls them while it writes an answer, with the same key
+    if (path.startsWith("/api/internal/tools/")) {
+      if (req.method !== "POST") return sendJson(res, 405, { error: "Use POST.", code: "invalid_request" });
+      if (config.internalKey && !sameSecret(String(req.headers["x-internal-key"] ?? ""), config.internalKey)) {
+        return sendJson(res, 401, { error: "Wrong key.", code: "unauthorized" });
+      }
+      return handleTool(req, res, path.slice("/api/internal/tools/".length).split("/").map(decodeURIComponent));
     }
 
     if (path.startsWith("/api/memory/")) {
@@ -137,6 +150,44 @@ export function createApp(config) {
     return sendJson(res, 404, { error: "Not found.", code: "invalid_request" });
   }
 
+  // One call of a search tool. A problem is answered as text with status 200, so that the agent reads it and goes on:
+  // an error status would stop its whole run.
+  async function handleTool(req, res, [runId, tool]) {
+    if (!config.tools) return sendJson(res, 503, { error: "The search tools are not configured.", code: "tools_unavailable" });
+    if (!evidence.has(runId)) return sendJson(res, 404, { error: "Nobody is waiting for this question any more.", code: "invalid_request" });
+    const body = await readJson(req, 100_000);
+    if (!body.ok) return sendJson(res, body.status, { error: body.error, code: body.code });
+    const args = body.value && typeof body.value === "object" ? body.value : {};
+    const reply = (text) => {
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(text);
+    };
+    const run = { search_knowledge: config.tools.search, find_files: config.tools.findFiles, describe_entity: config.tools.describeEntity, read_document: config.tools.readDocument }[tool];
+    if (!run) return sendJson(res, 404, { error: "Unknown tool.", code: "invalid_request" });
+    if (!evidence.useCall(runId)) {
+      return reply("<tool_note>No tool calls left. Write the answer now from the sources you already have, and say plainly what they do not cover.</tool_note>");
+    }
+    try {
+      const out = await run({
+        query: args.query,
+        source: args.source,
+        name: args.name,
+        model: args.model === true || args.model === "true",
+        path: args.path,
+        fromLine: args.from_line,
+        toLine: args.to_line,
+      });
+      // a tool returns the passages, or { passages, note } when it also has something to say (no such entity ...)
+      const found = Array.isArray(out) ? out : out?.passages ?? [];
+      const passages = evidence.add(runId, found);
+      const full = passages.length === 0 && found.length > 0 ? "The limit on the number of sources was reached. Answer from the sources you have." : "";
+      return reply(formatToolResult(passages, { note: [Array.isArray(out) ? "" : out?.note, full].filter(Boolean).join(" "), callsLeft: evidence.callsLeft(runId) }));
+    } catch (err) {
+      console.error(JSON.stringify({ time: new Date().toISOString(), tool, error: String(err?.message ?? err) }));
+      return reply("<tool_note>The search tool failed. Answer from the sources you already have.</tool_note>");
+    }
+  }
+
   async function handleChat(req, res) {
     const started = Date.now();
     const client = clientAddress(req);
@@ -201,8 +252,10 @@ export function createApp(config) {
 
     // With a public address, the agent may answer later: it gets a one-time return address, and the answer is awaited
     // here while the browser's request stays open. A workflow that answers at once works as before.
-    const requestId = publicUrl ? randomUUID() : "";
-    const waiter = requestId ? pending.expect(requestId) : null;
+    // The evidence of this question (see evidence.js) holds the passages sent now and those the agent finds with its tools
+    const requestId = randomUUID();
+    evidence.start(requestId, knowledge.passages);
+    const waiter = publicUrl ? pending.expect(requestId) : null;
     let result = await askAgent(
       {
         ...checked.value,
@@ -210,7 +263,9 @@ export function createApp(config) {
         passages: knowledge.passages,
         lessons,
         reports,
-        ...(requestId ? { callbackUrl: `${publicUrl}/api/internal/answer/${requestId}` } : {}),
+        ...(publicUrl ? { callbackUrl: `${publicUrl}/api/internal/answer/${requestId}` } : {}),
+        // where the agent's search tools are; without it the agent works with the passages above only
+        ...(publicUrl && config.tools && knowledge.status === "ok" ? { toolsUrl: `${publicUrl}/api/internal/tools/${requestId}`, toolCalls: config.maxToolCalls ?? 6 } : {}),
       },
       {
         url: config.n8nChatUrl,
@@ -233,13 +288,18 @@ export function createApp(config) {
     }
 
     if (!result.ok) {
+      evidence.end(requestId);
       log({ status: result.status, code: result.code, ms: Date.now() - started });
       return sendJson(res, result.status, { error: result.error, code: result.code });
     }
 
     // markers the model put under the wrong number are moved to the passage that holds the fact
-    const repair = repairCitations(result.value.answer, knowledge.passages);
-    const cited = buildCitations(repair.answer, knowledge.passages);
+    // (the passages are those sent with the question and those the agent found with its tools)
+    const passages = evidence.passages(requestId);
+    const used = evidence.stats(requestId);
+    evidence.end(requestId);
+    const repair = repairCitations(result.value.answer, passages);
+    const cited = buildCitations(repair.answer, passages);
     const value = {
       ...result.value,
       answer: cited.answer,
@@ -254,6 +314,8 @@ export function createApp(config) {
       tier: value.tier,
       knowledge: knowledge.status,
       found: knowledge.passages.length,
+      toolCalls: used.toolCalls,
+      foundWithTools: used.passages - knowledge.passages.length,
       cited: value.sources.length,
       repaired: repair.repaired,
       unverified: repair.unverified,

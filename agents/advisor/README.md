@@ -57,6 +57,26 @@ The request and response shapes are defined in `apps/advisor-web/src/lib/chat/ap
 
 Grounded search: the backend searches `packages/knowledge` and sends the passages to this workflow with each question; the agent answers only from them and cites them. Re-import the workflow file after changes to the prompts. More sources (IFS Community, 12Guide) and vector search come later.
 
+## Searching further (agentic loop)
+
+The backend does the first search, but one search can miss the point (for example only the line entity of an order, not its header). So the AI Agent node has four tools that let it look further itself, and it loops by itself (n8n's tool-calling agent) until it has what it needs:
+
+| Tool node | URL it calls | What the agent uses it for |
+|---|---|---|
+| `search_knowledge` | `<toolsUrl>/search_knowledge` | Search again with its own words, in all sources or only documentation, code or community |
+| `describe_entity` | `<toolsUrl>/describe_entity` | What an entity is, from its entity model file: view, all columns with type, key, parent (header) entity, references, states. How the agent checks that a column exists and whether an entity is a header or a line before it writes SQL |
+| `find_files` | `<toolsUrl>/find_files` | The files named like an entity or package (package code by default; `model=true` for the entity, projection and client files) |
+| `read_document` | `<toolsUrl>/read_document` | More lines of a file or page that a source showed only a part of |
+
+They are *HTTP Request Tool* nodes (`n8n-nodes-base.httpRequestTool`) connected to the **Advisor Agent** as tools. The URL starts with `toolsUrl`, which the backend adds to the request together with `toolCalls` (the number of calls it allows) and which holds a one-time id of the question. **Build prompt** adds a line `<search_tools status="on" calls="N"/>` (or `off`), and the system prompt has a rule *Searching further* that says when to make a call and when to stop. Everything a tool returns is a numbered `<source>` like the first ones, and the backend checks the `[n]` markers against all of them (see `apps/api/README.md`).
+
+After importing:
+1. Open each of the four tool nodes and select the same Header Auth credential as the Webhook node (`Advisor – internal key`), as for **Send answer**.
+2. The backend needs `PUBLIC_API_URL` (n8n calls it over HTTP) and `DATABASE_URL`. Without a public address no `toolsUrl` is sent: the line says `off` and the agent works with the first sources, as before.
+3. **Max Iterations** of the agent is 12. The backend allows `AGENT_MAX_TOOL_CALLS` (default 6) calls, below that on purpose: n8n stops with an error when it reaches its own limit, while a backend that has no calls left just tells the agent to answer.
+
+The tool nodes and `Build prompt` use the nodes' parameters as defined in n8n 2.41.5 (checked against its node definitions). The workflow was not run on a server yet: after importing, ask a question that needs a second search and look at the **Executions** tab, where every tool call of the agent shows. The backend log of such a question has `toolCalls` and `foundWithTools`.
+
 ## Memory (Step 9)
 
 The backend adds confirmed lessons (`lessons`) and unverified concerns from thumbs-down notes (`reports`) to the request, with the `customer` and `ifsVersion` the consultant chose. The Build prompt node puts them in a `<confirmed_lessons>` and a `<reported_issues status="unverified">` block next to the sources. The Memory rule tells the agent to use a confirmed lesson when it applies (saying in words that it rests on one, without a [n] marker) and to follow it over a source when they conflict; the Reported issues rule tells it that a report is not verified and never a source, to use it only as a reason to check the passages again, and to ignore it when the passages do not support it. Answers that got a thumbs up are returned by the backend without calling this workflow at all. **Re-import both workflow files after pulling this change.** See `apps/api/README.md` for how answers are saved and reused and how notes are reviewed.

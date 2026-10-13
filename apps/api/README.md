@@ -40,6 +40,21 @@ How the search is done (`src/knowledge.js`, `src/rewrite.js`):
 - The same model flags a question that is clearly not about IFS (for example "what is 2+2"). Nothing is searched for it, so the agent gets no passages and the router picks the Lite tier. A short follow-up question is judged on its own first, so it cannot borrow the previous question to look IFS-related.
 
 
+## The agent's search tools (agentic loop)
+
+The backend still does the first search before it sends the question to n8n. When it has a public address (`PUBLIC_API_URL`) and the knowledge base answered, it also sends `toolsUrl` (`<public address>/api/internal/tools/<one-time id>`) and `toolCalls` (how many calls are allowed). The AI Agent node in n8n then has four HTTP Request tools, and loops by itself until it has what it needs:
+
+| Tool (n8n node) | Endpoint (POST, `X-Internal-Key`) | Arguments | What it does |
+|---|---|---|---|
+| `search_knowledge` | `<toolsUrl>/search_knowledge` | `query`, `source` (`all`, `documentation`, `code`, `community`) | Searches again with the agent's own words |
+| `describe_entity` | `<toolsUrl>/describe_entity` | `name` | Reads the entity's `.entity` model file (`packages/knowledge/src/entity.js`) and returns its view, all its columns, key, parent (header) entity, references and states, and the names of entities that start like it. The agent uses it to confirm that a column exists before it writes SQL |
+| `find_files` | `<toolsUrl>/find_files` | `name`, `model` | The files named like an entity or package (`customer order` is `CustomerOrder...`); package code by default |
+| `read_document` | `<toolsUrl>/read_document` | `path`, `from_line`, `to_line` | More lines of a file or page that a source showed only a part of |
+
+**Evidence.** Everything the agent is shown, the first passages and everything the tools return, is kept for the question (`src/evidence.js`) under numbers 1, 2, 3, ... The agent cites them as `[n]`, and when the answer is back the markers are checked against this full list (`src/cite.js`), so a passage found halfway can be cited as safely as the first ones. A passage that comes back again keeps its number.
+
+**Limits.** At most `AGENT_MAX_TOOL_CALLS` calls (default 6) per question: after that a tool answers that no calls are left and the agent writes its answer. This is enforced here, below the maximum of 12 iterations set in n8n, because n8n stops with an error when it reaches its own limit. At most 60 passages, 120,000 extra characters and 40,000 characters per call. A tool that fails answers with a short text, not an error status, so the agent goes on. A one-time id only works while the question is being answered.
+
 ## Settings (environment variables)
 
 | Variable | Needed | Meaning |
@@ -54,6 +69,7 @@ How the search is done (`src/knowledge.js`, `src/rewrite.js`):
 | `PORT` | no | Defaults to 4000; Render sets it |
 | `RATE_LIMIT_PER_MINUTE` | no | Requests per client per minute, default 30 |
 | `AGENT_TIMEOUT_MS` | no | How long to wait for the agent, default 600000 (complete answers take minutes) |
+| `AGENT_MAX_TOOL_CALLS` | no | How many times the agent may use its search tools for one question, default 6 (see "The agent's search tools"). The tools need `DATABASE_URL` and the public address (`PUBLIC_API_URL`), because n8n calls them over HTTP |
 
 See `.env.example`. Never commit real values.
 

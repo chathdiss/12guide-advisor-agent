@@ -1,5 +1,6 @@
 import { createApp } from "./server.js";
-import { createRetriever } from "./knowledge.js";
+import { createRetriever, searchBoth } from "./knowledge.js";
+import { createTools } from "./tools.js";
 import { createMemory } from "./memory.js";
 import { createRewriter } from "./rewrite.js";
 import { findByName, findByTitle, loadDocumentTexts, searchKnowledge } from "../../../packages/knowledge/src/search.js";
@@ -49,6 +50,15 @@ if (process.env.DATABASE_URL) {
     : null;
   if (!rewrite) console.warn("Warning: ANTHROPIC_API_KEY is not set, so questions are searched as typed (no translation or synonyms).");
   config.memory = createMemory(db);
+  // the search tools of the agent (needs PUBLIC_API_URL: n8n calls them over HTTP)
+  config.tools = createTools({
+    db,
+    search: searchKnowledge,
+    searchAll: (pool, query, limit) => searchBoth(searchKnowledge, pool, query, limit, null, findByTitle, findByName),
+    loadFull: loadDocumentTexts,
+    findNames: findByName,
+  });
+  config.maxToolCalls = Number(process.env.AGENT_MAX_TOOL_CALLS) || 6;
   config.retrieve = createRetriever({ db, search: searchKnowledge, rewrite, loadFull: loadDocumentTexts, findTitles: findByTitle, findNames: findByName });
 } else {
   console.warn("Warning: DATABASE_URL is not set, so answers are not grounded in the approved sources.");

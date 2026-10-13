@@ -7,6 +7,7 @@ import { chunkText } from "../src/chunk.js";
 import { splitIdentifiers } from "../src/identifiers.js";
 import { prepareDocument } from "../src/prepare.js";
 import { blendedCoverage, candidateTerms, findByName, findByTitle, inflections, loadDocumentTexts, namePhrases, searchKnowledge, sizeFactor, sourceWeight, titleIsAsked } from "../src/search.js";
+import { entitySummary, parseEntityModel } from "../src/entity.js";
 import { walkIfsSource } from "../src/sources/ifs-source.js";
 
 const plsql = (n) =>
@@ -699,5 +700,65 @@ describe("pages saved from a browser", async () => {
     assert.equal(doc.url, "https://docs.ifs.com/policy/");
     assert.equal(doc.text, "# Policy\n\nLine one.\n\nLine two.");
     assert.equal(doc.component, "Policies");
+  });
+});
+
+describe("entity model files", () => {
+  const xml = (name, parent = null) => `<?xml version="1.0"?>
+<ENTITY>
+  <DIAGRAMS>
+    <DIAGRAM><NAME>Main</NAME><NODES><DIAGRAM_NODE><NAME>NotAnAttribute</NAME></DIAGRAM_NODE></NODES></DIAGRAM>
+  </DIAGRAMS>
+  <COMMENTS><COMMENT><COMMENT_TEXT>history</COMMENT_TEXT></COMMENT></COMMENTS>
+  <NAME>${name}</NAME>
+  <COMPONENT>ORDER</COMPONENT>
+  <ATTRIBUTES>
+    <ATTRIBUTE><CODE_GENERATION_PROPERTIES><LABEL_TEXT>Order</LABEL_TEXT></CODE_GENERATION_PROPERTIES><NAME>OrderNo</NAME><IS_PRIMARY_KEY>1</IS_PRIMARY_KEY><IS_MANDATORY>0</IS_MANDATORY><IS_DERIVED>0</IS_DERIVED><DATATYPE>TEXT</DATATYPE></ATTRIBUTE>
+    <ATTRIBUTE><NAME>DateEntered</NAME><IS_PRIMARY_KEY>0</IS_PRIMARY_KEY><IS_MANDATORY>0</IS_MANDATORY><IS_DERIVED>0</IS_DERIVED><DATATYPE>TIMESTAMP</DATATYPE></ATTRIBUTE>
+    <ATTRIBUTE><NAME>Contract</NAME><IS_PRIMARY_KEY>0</IS_PRIMARY_KEY><IS_MANDATORY>1</IS_MANDATORY><IS_DERIVED>0</IS_DERIVED><DATATYPE>TEXT</DATATYPE></ATTRIBUTE>
+  </ATTRIBUTES>
+  <ASSOCIATIONS>
+    ${parent ? `<ASSOCIATION><NAME>OrderNoRef</NAME><IS_PARENT>1</IS_PARENT><TO_ENTITY>${parent}</TO_ENTITY><ATTRIBUTES><ASSOCIATION_ATTRIBUTE><NAME>OrderNo</NAME></ASSOCIATION_ATTRIBUTE></ATTRIBUTES></ASSOCIATION>` : ""}
+    <ASSOCIATION><NAME>ContractRef</NAME><IS_PARENT>0</IS_PARENT><TO_ENTITY>Site</TO_ENTITY><ATTRIBUTES><ASSOCIATION_ATTRIBUTE><NAME>Contract</NAME></ASSOCIATION_ATTRIBUTE></ATTRIBUTES></ASSOCIATION>
+  </ASSOCIATIONS>
+  <STATES><STATE><NAME>{start}</NAME><TRANSITIONS><TRANSITION><TO_STATE>Planned</TO_STATE></TRANSITION></TRANSITIONS></STATE><STATE><NAME>Planned</NAME></STATE><STATE><NAME>Released</NAME></STATE></STATES>
+</ENTITY>`;
+
+  it("reads the attributes, the key, the associations and the states, and ignores the diagrams and comments", () => {
+    const m = parseEntityModel(xml("CustomerOrder"));
+    assert.equal(m.name, "CustomerOrder");
+    assert.equal(m.component, "ORDER");
+    assert.deepEqual(m.attributes.map((a) => a.name), ["OrderNo", "DateEntered", "Contract"]);
+    assert.deepEqual(m.attributes.filter((a) => a.key).map((a) => a.name), ["OrderNo"]);
+    assert.equal(m.attributes[1].datatype, "TIMESTAMP");
+    assert.deepEqual(m.associations.map((a) => [a.to, a.parent, a.columns]), [["Site", false, ["Contract"]]]);
+    assert.deepEqual(m.states, ["Planned", "Released"]);
+  });
+
+  it("keeps the line numbers of the original file", () => {
+    const text = xml("CustomerOrder");
+    const m = parseEntityModel(text);
+    const lines = text.split("\n");
+    assert.match(lines[m.attributeLines[0] - 1], /<ATTRIBUTES>/);
+    assert.match(lines[m.attributeLines[1] - 1], /<\/ATTRIBUTES>/);
+  });
+
+  it("returns null for a text that is no entity, and reads Windows line ends", () => {
+    assert.equal(parseEntityModel("<nothing/>"), null);
+    assert.equal(parseEntityModel(""), null);
+    assert.equal(parseEntityModel(xml("CustomerOrder").replace(/\n/g, "\r\n")).attributes.length, 3);
+  });
+
+  it("says in the summary whether the entity is a header or a line, with its view, columns and the join", () => {
+    const header = entitySummary(parseEntityModel(xml("CustomerOrder")), { others: ["CustomerOrderLine"] });
+    assert.match(header, /Database view CUSTOMER_ORDER, table CUSTOMER_ORDER_TAB/);
+    assert.match(header, /MASTER \(header\)/);
+    assert.match(header, /DATE_ENTERED \(timestamp\)/);
+    assert.match(header, /ORDER_NO \(text, key\)/);
+    assert.match(header, /CONTRACT \(text, mandatory\)/);
+    assert.match(header, /Other entities whose name starts like this one.*CustomerOrderLine/);
+    const line = entitySummary(parseEntityModel(xml("CustomerOrderLine", "CustomerOrder")));
+    assert.match(line, /DETAIL \(line\) entity. Parent \(header\) entity: CustomerOrder \(CUSTOMER_ORDER\), joined on ORDER_NO/);
+    assert.match(line, /References to other entities: Site \(CONTRACT\)/);
   });
 });
