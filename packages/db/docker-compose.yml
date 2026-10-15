@@ -1,0 +1,24 @@
+# Local PostgreSQL with the pgvector extension, for the Advisor's knowledge base.
+#
+#   cd packages/db
+#   copy .env.example .env      (then set POSTGRES_PASSWORD)
+#   docker compose up -d
+#
+# It listens on 127.0.0.1:5433 only, so your normal PostgreSQL on 5432 is left alone.
+# Open it in pgAdmin: host localhost, port 5433, database advisor, user advisor.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: advisor-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: advisor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in packages/db/.env}
+      POSTGRES_DB: advisor
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - advisor-pgdata:/var/lib/postgresql/data
+
+volumes:
+  advisor-pgdata:

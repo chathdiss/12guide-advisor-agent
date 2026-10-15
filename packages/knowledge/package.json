@@ -1,0 +1,36 @@
+{
+  "name": "@12guide/knowledge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Knowledge base of the Advisor: reads documents, splits them into chunks and stores them in PostgreSQL.",
+  "type": "module",
+  "scripts": {
+    "db:init": "node --env-file=../db/.env src/cli/init-db.js",
+    "ingest:ifs": "node --env-file=../db/.env src/cli/ingest-ifs.js",
+    "ingest:ifs:dry": "node src/cli/ingest-ifs.js --dry-run",
+    "test": "node --test",
+    "search": "node --env-file=../db/.env src/cli/search.js",
+    "ingest:dsj23": "node --env-file=../db/.env src/cli/ingest-dsj23.js",
+    "ingest:dsj23:dry": "node src/cli/ingest-dsj23.js --dry-run",
+    "ingest:community": "node --env-file=../db/.env src/cli/ingest-community.js",
+    "ingest:community:dry": "node src/cli/ingest-community.js --dry-run",
+    "crawl:community": "node src/cli/crawl-community.js",
+    "ingest:docs": "node --env-file=../db/.env src/cli/ingest-docs.js",
+    "ingest:docs:dry": "node src/cli/ingest-docs.js --dry-run",
+    "ingest:files": "node --env-file=../db/.env src/cli/ingest-files.js",
+    "ingest:files:dry": "node src/cli/ingest-files.js --dry-run",
+    "ingest:pages": "node --env-file=../db/.env src/cli/ingest-pages.js",
+    "ingest:pages:dry": "node src/cli/ingest-pages.js --dry-run",
+    "ingest:dictionary": "node --env-file=../db/.env src/cli/ingest-dictionary.js",
+    "ingest:dictionary:dry": "node src/cli/ingest-dictionary.js --dry-run"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "fflate": "^0.8.3",
+    "pdfjs-dist": "^6.4.299",
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=20.6"
+  }
+}

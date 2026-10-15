@@ -1,0 +1,29 @@
+# dependencies and build output
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+.netlify/
+*.tsbuildinfo
+next-env.d.ts
+
+# local environment files hold secrets and local URLs: never commit them (examples are fine)
+.env
+.env.*
+!.env.example
+
+# logs
+*.log
+npm-debug.log*
+
+# operating system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# source documents and archives must never reach this public repo
+*.zip
+/advisor-knowledge/

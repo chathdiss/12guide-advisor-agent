@@ -1,0 +1,20 @@
+{
+  "name": "advisor-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend of the Advisor web app: validates questions and forwards them to the Advisor agent in n8n.",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "start:local": "node --env-file=.env src/index.js",
+    "dev": "node --watch --env-file=.env src/index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
