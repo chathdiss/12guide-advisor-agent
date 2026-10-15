@@ -8,6 +8,11 @@
 // passages that come with the question.
 import { buildPassages } from "./knowledge.js";
 import { entitySummary, parseEntityModel } from "../../../packages/knowledge/src/entity.js";
+import { columnHitsText, luSummary, referenceTarget } from "../../../packages/knowledge/src/dictionary-summary.js";
+
+const DICTIONARY_ORIGIN = "IFS data dictionary";
+// words that say nothing about which column is meant
+const COLUMN_FILLER = new Set("the of a an in on for to is are which what where column columns field fields holds hold has have with view views table tables and or".split(" "));
 
 const RESULT_CHARS = 40_000; // the text one tool call may return
 const READ_CHARS = 14_000; // one piece of a document
@@ -39,7 +44,128 @@ export function createTools({ db, search, searchAll, loadFull, findNames = null 
     return buildPassages(found, full, { budget: RESULT_CHARS });
   };
 
+  // --- the IFS data dictionary (packages/db/schema/004_dictionary.sql), when it has been loaded ---
+
+  // The logical unit with this name (CustomerOrderLine), base view (CUSTOMER_ORDER_LINE) or prompt (Customer Order Line).
+  // null when there is none, or when the dictionary tables do not exist (the dictionary is not loaded).
+  const findLogicalUnit = async (letters) => {
+    try {
+      for (const key of [letters, letters.length > 4 && letters.endsWith("s") ? letters.slice(0, -1) : null].filter(Boolean)) {
+        const { rows } = await db.query(
+          `SELECT * FROM dictionary_lu
+            WHERE lower(lu_name) = $1 OR replace(lower(base_view), '_', '') = $1 OR replace(lower(lu_prompt), ' ', '') = $1
+            ORDER BY (lower(lu_name) = $1) DESC, (base_view <> '') DESC, version DESC LIMIT 1`,
+          [key],
+        );
+        if (rows[0]) return rows[0];
+      }
+      return null;
+    } catch (err) {
+      if (err?.code === "42P01") return null; // undefined_table
+      throw err;
+    }
+  };
+
+  const describeFromDictionary = async (lu) => {
+    const { version } = lu;
+    const columns = lu.base_view
+      ? (await db.query(
+          `SELECT column_name, datatype, prompt, type_flag, required_flag, column_reference, enumeration, row_level_security
+             FROM dictionary_column WHERE version = $1 AND view_name = $2 ORDER BY column_index`,
+          [version, lu.base_view],
+        )).rows
+      : [];
+    const otherViews = (await db.query(
+      "SELECT DISTINCT view_name FROM dictionary_column WHERE version = $1 AND lu_name = $2 AND view_name <> $3 ORDER BY 1",
+      [version, lu.lu_name, lu.base_view],
+    )).rows.map((r) => r.view_name);
+    // the detail entities: the logical units that have this one's key as a parent key
+    const children = (await db.query(
+      `SELECT DISTINCT c.lu_name FROM dictionary_column c
+         JOIN dictionary_lu l ON l.version = c.version AND l.lu_name = c.lu_name AND l.base_view = c.view_name
+        WHERE c.version = $1 AND c.type_flag = 'P' AND c.lu_name <> $2 AND l.lu_type IN ('Entity', 'EntityWithState')
+          AND (c.column_reference = $2 OR c.column_reference LIKE $2 || '(%' OR c.column_reference LIKE $2 || '/%')
+        ORDER BY 1`,
+      [version, lu.lu_name],
+    )).rows.map((r) => r.lu_name);
+    const similar = (await db.query(
+      `SELECT lu_name FROM dictionary_lu WHERE version = $1 AND lower(lu_name) LIKE $2 AND lu_name <> $3 AND base_view <> ''
+        ORDER BY length(lu_name), lu_name LIMIT 20`,
+      [version, `${lu.lu_name.toLowerCase()}%`, lu.lu_name],
+    )).rows.map((r) => r.lu_name);
+    // the base views of the units that are named in the text, so a join can say CustomerOrder (CUSTOMER_ORDER)
+    const named = [...new Set([...children, ...columns.filter((c) => c.type_flag === "P").map((c) => referenceTarget(c.column_reference).lu)].filter(Boolean))];
+    const viewOf = new Map(
+      named.length === 0 ? [] : (await db.query("SELECT lu_name, base_view FROM dictionary_lu WHERE version = $1 AND lu_name = ANY($2)", [version, named])).rows.map((r) => [r.lu_name, r.base_view]),
+    );
+    return {
+      passages: [
+        {
+          title: `${lu.lu_name} (data dictionary)`,
+          path: `dictionary/${version}/${lu.lu_name}`,
+          origin: DICTIONARY_ORIGIN,
+          url: "",
+          version: `${lu.module} ${version}`.trim(),
+          startLine: 1,
+          endLine: Math.max(1, columns.length),
+          content: luSummary({ lu, columns, otherViews, children, similar, viewOf }),
+        },
+      ],
+      note: "",
+    };
+  };
+
   return {
+    // Columns of entity views whose name or prompt (the label in the screens) has these words, in the data dictionary: which
+    // column holds "planned delivery date", and in which views. `entity` limits it to one logical unit.
+    async findColumns({ query, entity = "" }) {
+      const words = (String(query ?? "").toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((w) => w.length > 1 && !COLUMN_FILLER.has(w)).slice(0, 8);
+      if (words.length === 0) return { passages: [], note: "Give the words of the column, for example 'planned delivery date'." };
+      const only = String(entity ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      let version;
+      try {
+        version = (await db.query("SELECT version FROM dictionary_load WHERE kind = 'column' ORDER BY loaded_at DESC LIMIT 1")).rows[0]?.version;
+      } catch (err) {
+        if (err?.code !== "42P01") throw err;
+      }
+      if (!version) return { passages: [], note: "The IFS data dictionary is not loaded, so columns cannot be searched." };
+      const search = async (operator) =>
+        (await db.query(
+          `SELECT c.view_name, c.column_name, c.datatype, c.prompt, c.type_flag, c.column_reference, c.lu_name, l.module
+             FROM dictionary_column c
+             JOIN dictionary_lu l ON l.version = c.version AND l.lu_name = c.lu_name AND l.base_view = c.view_name
+            WHERE c.version = $1
+              AND to_tsvector('simple', replace(c.column_name, '_', ' ') || ' ' || c.prompt) @@ to_tsquery('simple', $2)
+              AND ($3 = '' OR lower(c.lu_name) = $3 OR replace(lower(l.lu_prompt), ' ', '') = $3 OR replace(lower(c.view_name), '_', '') = $3)
+            ORDER BY (replace(lower(c.column_name), '_', '') = $4) DESC, length(c.column_name), length(c.view_name), c.view_name
+            LIMIT 25`,
+          [version, words.map((w) => `${w}:*`).join(operator), only, words.join("")],
+        )).rows;
+      // all the words first; when no column has them all, columns that have some of them
+      let hits = await search(" & ");
+      let widened = false;
+      if (hits.length === 0 && words.length > 1) {
+        hits = await search(" | ");
+        widened = true;
+      }
+      if (hits.length === 0) return { passages: [], note: `No column of an entity view has the words '${words.join(" ")}'${only ? ` in ${entity}` : ""}.` };
+      return {
+        passages: [
+          {
+            title: `Columns matching "${words.join(" ")}" (data dictionary)`,
+            path: `dictionary/${version}/columns/${words.join("+")}${only ? `/${only}` : ""}`,
+            origin: DICTIONARY_ORIGIN,
+            url: "",
+            version,
+            startLine: 1,
+            endLine: hits.length,
+            content: columnHitsText(hits, { query: words.join(" "), version }),
+          },
+        ],
+        note: widened ? "No column has all the words; these columns have some of them." : "",
+      };
+    },
+
     // The words of the agent, searched in all sources or in one kind of source
     async search({ query, source = "all" }) {
       const text = String(query ?? "").trim().slice(0, 500);
@@ -65,11 +191,14 @@ export function createTools({ db, search, searchAll, loadFull, findNames = null 
       return shape(await findNames(db, model ? `${text} model` : text, { limit: 6 }));
     },
 
-    // What an entity is: its columns, key, parent (header) entity and references, read from its .entity model file. This is how the
-    // agent checks that a column exists, and whether an entity is a header or a line, before it puts them in a query.
+    // What an entity is: its columns, key, parent (header) entity and references. This is how the agent checks that a column
+    // exists, and whether an entity is a header or a line, before it puts them in a query. The IFS data dictionary is used when
+    // it is loaded (exact view, table and package names, all columns of the view); otherwise the .entity model file.
     async describeEntity({ name }) {
       const letters = String(name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
       if (letters.length < 3) return { passages: [], note: "Give the name of an entity, for example 'customer order' or CustomerOrderLine." };
+      const lu = await findLogicalUnit(letters);
+      if (lu) return describeFromDictionary(lu);
       const { rows: files } = await db.query(
         `SELECT doc_key, title, version, component FROM knowledge_documents
           WHERE origin = 'IFS source code' AND lower(title) = $1 ORDER BY version DESC LIMIT 3`,

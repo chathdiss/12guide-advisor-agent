@@ -162,7 +162,7 @@ export function createApp(config) {
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
       res.end(text);
     };
-    const run = { search_knowledge: config.tools.search, find_files: config.tools.findFiles, describe_entity: config.tools.describeEntity, read_document: config.tools.readDocument }[tool];
+    const run = { search_knowledge: config.tools.search, find_files: config.tools.findFiles, describe_entity: config.tools.describeEntity, find_columns: config.tools.findColumns, read_document: config.tools.readDocument }[tool];
     if (!run) return sendJson(res, 404, { error: "Unknown tool.", code: "invalid_request" });
     if (!evidence.useCall(runId)) {
       return reply("<tool_note>No tool calls left. Write the answer now from the sources you already have, and say plainly what they do not cover.</tool_note>");
@@ -172,6 +172,7 @@ export function createApp(config) {
         query: args.query,
         source: args.source,
         name: args.name,
+        entity: args.entity,
         model: args.model === true || args.model === "true",
         path: args.path,
         fromLine: args.from_line,

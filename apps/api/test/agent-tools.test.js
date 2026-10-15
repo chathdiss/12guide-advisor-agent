@@ -114,6 +114,7 @@ describe("an agent that searches while it works", () => {
     search: async ({ query }) => [found(2, { path: "doc/Header.entity", title: "CustomerOrder.entity", content: `header found for ${query}` })],
     findFiles: async () => [found(3, { path: "doc/Header.plsql", title: "CustomerOrder.plsql" })],
     readDocument: async () => [found(4, { path: "doc/Line.entity", startLine: 10, endLine: 20 })],
+    findColumns: async ({ query, entity }) => ({ passages: [found(6, { path: "dictionary/V/columns/x", title: "Columns matching (data dictionary)", content: `columns for ${query} in ${entity}` })], note: "" }),
     describeEntity: async ({ name }) => (name === "nothing" ? { passages: [], note: "No entity model file was found for 'nothing'." } : { passages: [found(5, { path: "doc/Header.entity", title: "CustomerOrder.entity (entity summary)", content: "DATE_ENTERED (timestamp)" })], note: "" }),
   };
 
@@ -195,6 +196,18 @@ describe("an agent that searches while it works", () => {
     assert.deepEqual(value.sources.map((x) => x.title), ["CustomerOrder.entity (entity summary)"]);
   });
 
+  it("lets the agent search columns: the words and the entity reach the tool, and the result is a numbered source", async () => {
+    let text = "";
+    behaviour = async (sent) => {
+      text = await (await callTool(sent, "find_columns", { query: "planned delivery date", entity: "customer order line" })).text();
+      return { answer: "It is the planned delivery date column [2].", sources: [] };
+    };
+    const value = await (await post(`${base}/api/chat`, { question: "Which column holds the planned delivery date?" })).json();
+    assert.ok(text.includes('<source id="2" file="dictionary/V/columns/x"'));
+    assert.ok(text.includes("columns for planned delivery date in customer order line"));
+    assert.deepEqual(value.sources.map((x) => x.title), ["Columns matching (data dictionary)"]);
+  });
+
   it("refuses the tools without the key, for an unknown question, an unknown tool and a wrong method", async () => {
     let sent = null;
     behaviour = async (s) => {
@@ -259,6 +272,8 @@ describe("the describe_entity tool", () => {
     return {
       calls,
       query: async (sql, params) => {
+        // the data dictionary is not loaded in these tests: its tables do not exist, so the entity files are used
+        if (sql.includes("dictionary_")) throw Object.assign(new Error('relation "dictionary_lu" does not exist'), { code: "42P01" });
         calls.push(params);
         return { rows: sql.includes("regexp_replace") ? similar.map((name) => ({ name })) : files };
       },
@@ -287,5 +302,109 @@ describe("the describe_entity tool", () => {
     assert.deepEqual(none.passages, []);
     assert.match(none.note, /No entity model file was found.*CustomerOrderLine/);
     assert.match((await tools.describeEntity({ name: "x" })).note, /Give the name of an entity/);
+  });
+});
+
+describe("the data dictionary tools", () => {
+  const V = "IFS Cloud 25R2";
+  const lu = (extra = {}) => ({ version: V, lu_name: "CustomerOrderLine", module: "ORDER", lu_prompt: "Customer Order Line", base_table: "CUSTOMER_ORDER_LINE_TAB", base_view: "CUSTOMER_ORDER_LINE", base_package: "CUSTOMER_ORDER_LINE_API", lu_type: "EntityWithState", ...extra });
+  const col = (name, extra = {}) => ({ column_name: name, datatype: "STRING(20)/UPPERCASE", prompt: "", type_flag: "A", required_flag: "", column_reference: "", enumeration: "", row_level_security: "", ...extra });
+
+  // a fake database that answers by what the query is about
+  const dictDb = ({ units = {}, columns = {}, children = {}, hits = [], loaded = true } = {}) => {
+    const log = [];
+    return {
+      log,
+      query: async (sql, params) => {
+        log.push({ sql, params });
+        if (!loaded) throw Object.assign(new Error("no table"), { code: "42P01" });
+        if (sql.includes("FROM dictionary_load")) return { rows: [{ version: V }] };
+        if (sql.includes("to_tsquery")) return { rows: hits };
+        if (sql.startsWith("SELECT * FROM dictionary_lu")) return { rows: units[params[0]] ? [units[params[0]]] : [] };
+        if (sql.includes("SELECT column_name, datatype")) return { rows: columns[params[1]] ?? [] };
+        if (sql.includes("SELECT DISTINCT view_name")) return { rows: [{ view_name: "CUSTOMER_ORDER_LINE_LOV" }, { view_name: "CUSTOMER_ORDER_LINE_PUB" }] };
+        if (sql.includes("c.type_flag = 'P'")) return { rows: (children[params[1]] ?? []).map((lu_name) => ({ lu_name })) };
+        if (sql.includes("lower(lu_name) LIKE")) return { rows: [{ lu_name: "CustomerOrderLineHist" }] };
+        if (sql.includes("SELECT lu_name, base_view")) return { rows: params[1].map((lu_name) => ({ lu_name, base_view: lu_name === "CustomerOrder" ? "CUSTOMER_ORDER" : lu_name === "CustomerOrderCharge" ? "CUSTOMER_ORDER_CHARGE" : "CUSTOMER_ORDER_LINE" })) };
+        return { rows: [] };
+      },
+    };
+  };
+  const tools = (db, loadFull = async () => new Map()) => createTools({ db, search: async () => [], searchAll: async () => [], loadFull });
+
+  const lineColumns = [
+    col("ORDER_NO", { datatype: "STRING(12)/UPPERCASE", type_flag: "P", required_flag: "M", column_reference: "CustomerOrder" }),
+    col("LINE_NO", { datatype: "STRING(4)", type_flag: "K", required_flag: "M" }),
+    col("CONTRACT", { prompt: "Site", required_flag: "M", column_reference: "Site", row_level_security: "site" }),
+    col("PLANNED_DELIVERY_DATE", { datatype: "DATE/DATETIME", prompt: "Planned Delivery Date" }),
+    col("OBJSTATE", { datatype: "" }),
+    col("STATE", { datatype: "STRING(20)", prompt: "State" }),
+  ];
+
+  it("describes a line entity from the dictionary: its view, table, package, all columns and its parent (header) entity", async () => {
+    const db = dictDb({ units: { customerorderline: lu() }, columns: { CUSTOMER_ORDER_LINE: lineColumns } });
+    let filesRead = 0;
+    const { passages, note } = await tools(db, async () => (filesRead++, new Map())).describeEntity({ name: "customer order line" });
+    assert.equal(note, "");
+    assert.equal(filesRead, 0, "the entity model file is not needed when the dictionary has the unit");
+    const [p] = passages;
+    assert.equal(p.origin, "IFS data dictionary");
+    assert.equal(p.path, `dictionary/${V}/CustomerOrderLine`);
+    assert.equal(p.version, `ORDER ${V}`);
+    assert.equal(p.endLine, 6);
+    assert.match(p.content, /base table CUSTOMER_ORDER_LINE_TAB, base view CUSTOMER_ORDER_LINE, base package CUSTOMER_ORDER_LINE_API/);
+    assert.match(p.content, /DETAIL entity \(it has a parent key\). Parent \(header\) entity: CustomerOrder \(CUSTOMER_ORDER\), joined on ORDER_NO/);
+    assert.match(p.content, /Key columns: ORDER_NO, LINE_NO/);
+    assert.match(p.content, /PLANNED_DELIVERY_DATE \(datetime, prompt "Planned Delivery Date"\)|PLANNED_DELIVERY_DATE \(datetime\)/);
+    assert.match(p.content, /CONTRACT \(string\(20\), prompt "Site", mandatory\)/);
+    assert.match(p.content, /OBJSTATE \(system column\)/);
+    assert.match(p.content, /Joins \(column -> logical unit it points to\): CONTRACT -> Site/);
+    assert.match(p.content, /Row-level security: CONTRACT \(site\)/);
+    assert.match(p.content, /Other views of this logical unit: CUSTOMER_ORDER_LINE_LOV, CUSTOMER_ORDER_LINE_PUB/);
+  });
+
+  it("describes a header: it has no parent key, and the detail entities are the units that carry its key as a parent key", async () => {
+    const db = dictDb({
+      units: { customerorder: lu({ lu_name: "CustomerOrder", lu_prompt: "Customer Order", base_table: "CUSTOMER_ORDER_TAB", base_view: "CUSTOMER_ORDER", base_package: "CUSTOMER_ORDER_API" }) },
+      columns: { CUSTOMER_ORDER: [col("ORDER_NO", { type_flag: "K", required_flag: "M" }), col("DATE_ENTERED", { datatype: "DATE/DATETIME" })] },
+      children: { CustomerOrder: ["CustomerOrderCharge", "CustomerOrderLine"] },
+    });
+    const { passages } = await tools(db).describeEntity({ name: "CUSTOMER_ORDER" });
+    assert.match(passages[0].content, /MASTER \(header\) entity. It has no parent key. Its detail entities.*CustomerOrderCharge \(CUSTOMER_ORDER_CHARGE\), CustomerOrderLine \(CUSTOMER_ORDER_LINE\)/);
+    assert.match(passages[0].content, /DATE_ENTERED \(datetime\)/);
+  });
+
+  it("finds a unit by its plural, its base view or its prompt, and falls back to the entity files when the dictionary has no such unit", async () => {
+    const db = dictDb({ units: { customerorder: lu({ lu_name: "CustomerOrder", base_view: "CUSTOMER_ORDER" }) } });
+    await tools(db).describeEntity({ name: "customer orders" });
+    const keys = db.log.filter((q) => q.sql.startsWith("SELECT * FROM dictionary_lu")).map((q) => q.params[0]);
+    assert.deepEqual(keys, ["customerorders", "customerorder"], "the plural is tried as written, then without the s");
+    const none = dictDb({});
+    const out = await tools(none).describeEntity({ name: "nothing like this" });
+    assert.match(out.note, /No entity model file was found/);
+    assert.ok(none.log.some((q) => q.sql.includes("knowledge_documents")), "the entity files are the fallback");
+  });
+
+  it("searches columns by the words of their name or prompt, with prefixes, and widens the search when no column has all the words", async () => {
+    const hit = { view_name: "CUSTOMER_ORDER_LINE", column_name: "PLANNED_DELIVERY_DATE", datatype: "DATE/DATETIME", prompt: "Planned Delivery Date", type_flag: "A", column_reference: "", lu_name: "CustomerOrderLine", module: "ORDER" };
+    const db = dictDb({ hits: [hit] });
+    const { passages, note } = await tools(db).findColumns({ query: "Which column holds the planned delivery date?" });
+    const call = db.log.find((q) => q.sql.includes("to_tsquery"));
+    assert.deepEqual(call.params, [V, "planned:* & delivery:* & date:*", "", "planneddeliverydate"], "filler words are dropped, every word is a prefix");
+    assert.equal(note, "");
+    assert.match(passages[0].content, /CUSTOMER_ORDER_LINE\.PLANNED_DELIVERY_DATE \(datetime, prompt "Planned Delivery Date"\) - CustomerOrderLine, ORDER/);
+    assert.equal(passages[0].path, `dictionary/${V}/columns/planned+delivery+date`);
+
+    const widen = dictDb({ hits: [] });
+    const none = await tools(widen).findColumns({ query: "flux capacitor", entity: "Customer Order" });
+    assert.equal(widen.log.filter((q) => q.sql.includes("to_tsquery")).length, 2, "all words first, then any of them");
+    assert.equal(widen.log.filter((q) => q.sql.includes("to_tsquery"))[1].params[1], "flux:* | capacitor:*");
+    assert.equal(widen.log.filter((q) => q.sql.includes("to_tsquery"))[1].params[2], "customerorder");
+    assert.match(none.note, /No column of an entity view has the words 'flux capacitor' in Customer Order/);
+  });
+
+  it("says so when the dictionary is not loaded, or when there are no words to search for", async () => {
+    assert.match((await tools(dictDb({ loaded: false })).findColumns({ query: "planned delivery date" })).note, /dictionary is not loaded/);
+    assert.match((await tools(dictDb()).findColumns({ query: "the of a" })).note, /Give the words of the column/);
   });
 });
