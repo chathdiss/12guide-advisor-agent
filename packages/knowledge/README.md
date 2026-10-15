@@ -54,6 +54,20 @@ npm test
 
 All loaders skip what did not change, so they can be run again at any time.
 
+## IFS data dictionary (exact table, view and column names)
+
+Two exports of the IFS dictionary tell the Advisor which entities exist and what their views are: `DICTIONARY_SYS_LU_ACTIVE.xlsx` (13,340 logical units: module, base table, base view, base package, type) and `DICTIONARY_SYS_VIEW_COLUMN_ACT.xlsx` (382,000 view columns: type, prompt, key / parent key / mandatory flags, the logical unit a column points to, enumeration, row-level security). They are standard IFS objects (no customer custom fields). The files are kept in a folder outside the repository, like the IFS source.
+
+```powershell
+npm run db:init                                    # creates the tables (schema 004_dictionary.sql); safe to run again
+npm run ingest:dictionary:dry -- --dir D:\Downloads\ifs-dictionary                          # reads the files and counts, no database
+npm run ingest:dictionary -- --dir D:\Downloads\ifs-dictionary --version "IFS Cloud 25R2"   # stores them
+```
+
+`--version` is the release the export was made from (default `IFS Cloud 25R2`); rows of different versions are kept apart. A repeat run skips a file that did not change; a changed file replaces what was stored for that version in one transaction. The `.xlsx` files are read with `src/xlsx.js` (fflate, in pieces, so the 137 MB sheet does not need to fit in one string); the columns are found by the names in the header row.
+
+The Advisor reaches it through two tools (see `apps/api/README.md`): `describe_entity` (base table, view and package, all columns of the view, the parent (header) entity or the detail entities, the other views) and `find_columns` (which column holds "planned delivery date"). A **parent key** (`TYPE_FLAG` P) is what makes an entity a detail of another one: `ORDER_NO` is a parent key in `CUSTOMER_ORDER_LINE` and a key in `CUSTOMER_ORDER`. To load the dictionary into the deployed database, run the same command with the `DATABASE_URL` of that database.
+
 ## What is loaded now
 
 | Source | Origin shown in answers | Size |
