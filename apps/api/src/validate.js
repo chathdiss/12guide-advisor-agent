@@ -1,3 +1,5 @@
+import { stripCitations } from "./cite.js";
+
 // Checks a chat request from the web app before anything is sent on to the agent.
 // The limits match the web app's own (apps/advisor-web/src/lib/chat/api-types.ts).
 
@@ -72,8 +74,14 @@ function cleanHistory(input) {
   return input
     .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
     .slice(-MAX_HISTORY_MESSAGES)
-    .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_HISTORY_CHARS) }));
+    // the [n] markers of an earlier answer belong to the sources of that question: the agent must not see them next to new sources
+    .map((m) => ({ role: m.role, content: (m.role === "assistant" ? stripCitations(m.content) : m.content).slice(0, MAX_HISTORY_CHARS) }));
 }
+
+// Lines of the prompt that are meant for the agent only (see the Build prompt node of the workflow). A model sometimes copies
+// one into its answer: <search_tools status="on" calls="6"/>, <knowledge_status>ok</knowledge_status>, <tool_note>...</tool_note>.
+const INTERNAL_TAGS = /<search_tools\b[^>]*>|<knowledge_status>[\s\S]*?<\/knowledge_status>|<tool_note>[\s\S]*?<\/tool_note>/gi;
+export const stripInternalTags = (text) => String(text ?? "").replace(INTERNAL_TAGS, "").replace(/\n{3,}/g, "\n\n").trim();
 
 // Keeps only the fields the web app understands, whatever the agent returned
 export function cleanAgentResponse(data) {
@@ -87,7 +95,7 @@ export function cleanAgentResponse(data) {
     : undefined;
 
   return {
-    answer: data.answer,
+    answer: stripInternalTags(data.answer),
     sources: Array.isArray(data.sources) ? data.sources : [],
     tier: ["lite", "full", "super"].includes(data.tier) ? data.tier : undefined,
     tierReason: typeof data.tierReason === "string" ? data.tierReason : undefined,

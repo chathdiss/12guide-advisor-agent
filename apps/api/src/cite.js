@@ -5,6 +5,16 @@
 const MARKER = /\s?\[(\d{1,2}(?:\s*,\s*\d{1,2})*)\]/g;
 const CODE = /(```[\s\S]*?```|`[^`\n]*`)/;
 
+// An earlier answer of the chat, without its markers. The numbers in it belong to the sources of that earlier question, so
+// an agent that sees them next to a new set of sources may cite the wrong source under a number it has seen before.
+// Code is left alone: arr[1] in a code sample is not a citation.
+export function stripCitations(text) {
+  return String(text ?? "")
+    .split(CODE)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(MARKER, "")))
+    .join("");
+}
+
 export function buildCitations(answer, passages) {
   const order = []; // passage indexes in order of first citation
   const newNumber = new Map();

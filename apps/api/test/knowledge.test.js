@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { describe, it } from "node:test";
-import { buildCitations } from "../src/cite.js";
+import { buildCitations, stripCitations } from "../src/cite.js";
 import { asksAboutCode, createRetriever, quotedPhrases, searchBoth, retrievalQuery, titleNgrams } from "../src/knowledge.js";
 import { createRewriter, parseRewrite } from "../src/rewrite.js";
 import { createApp } from "../src/server.js";
+import { cleanAgentResponse, stripInternalTags, validateChatRequest } from "../src/validate.js";
 
 const passage = (n) => ({
   id: n,
@@ -413,5 +414,48 @@ describe("long documents", () => {
     const retrieve = createRetriever({ db: {}, search: async () => [hit(100), hit(120), hit(3500)], loadFull: async () => new Map([["u", guide]]) });
     const { passages } = await retrieve("a question about the guide please");
     assert.deepEqual(passages.map((p) => p.startLine > 3400), [false, true]); // 120 lies in the first part
+  });
+});
+
+describe("citations in the history of a chat", () => {
+  it("removes the markers of an earlier answer, but not code and not the user's own words", () => {
+    assert.equal(stripCitations("The column is PLANNED_DELIVERY_DATE [1]. It is mandatory [2][3] and a datetime [1, 4]."), "The column is PLANNED_DELIVERY_DATE. It is mandatory and a datetime.");
+    assert.equal(stripCitations("Use `arr[1]` here [2].\n```\nx[1] = 2;\n```"), "Use `arr[1]` here.\n```\nx[1] = 2;\n```");
+    assert.equal(stripCitations("no markers"), "no markers");
+    assert.equal(stripCitations(undefined), "");
+  });
+
+  it("sends the agent the earlier answers without their [n] markers, so it cannot reuse a number of an earlier question", () => {
+    const checked = validateChatRequest({
+      question: "Now give me the SQL query for the Lobby",
+      history: [
+        { role: "user", content: "Which column holds the planned delivery date? [1]" },
+        { role: "assistant", content: "It is PLANNED_DELIVERY_DATE on CUSTOMER_ORDER_LINE [1][2]." },
+      ],
+    });
+    assert.equal(checked.ok, true);
+    assert.deepEqual(checked.value.history, [
+      { role: "user", content: "Which column holds the planned delivery date? [1]" },
+      { role: "assistant", content: "It is PLANNED_DELIVERY_DATE on CUSTOMER_ORDER_LINE." },
+    ]);
+  });
+});
+
+describe("lines of the prompt that the agent copies into its answer", () => {
+  it("removes the search_tools line, the knowledge status and tool notes from an answer", () => {
+    const answer = "I do not find a table with that name. Which entity do you mean?\n\n<search_tools status=\"on\" calls=\"6\"/>";
+    assert.equal(stripInternalTags(answer), "I do not find a table with that name. Which entity do you mean?");
+    assert.equal(stripInternalTags("A\n<knowledge_status>ok</knowledge_status>\n\n\n\nB <tool_note>Tool calls left: 2.\nAt 0, answer.</tool_note>"), "A\n\nB");
+  });
+
+  it("leaves a normal answer, code and ordinary angle brackets alone", () => {
+    const text = "Use WHERE a < b AND c > d.\n\n```sql\nSELECT 1 FROM dual;\n```";
+    assert.equal(stripInternalTags(text), text);
+    assert.equal(stripInternalTags(undefined), "");
+  });
+
+  it("cleans the answer that comes back from the agent", () => {
+    const value = cleanAgentResponse({ answer: "Done.\n\n<search_tools status=\"off\"/>", sources: [] });
+    assert.equal(value.answer, "Done.");
   });
 });
