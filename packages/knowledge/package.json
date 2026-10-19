@@ -22,7 +22,9 @@
     "ingest:pages": "node --env-file=../db/.env src/cli/ingest-pages.js",
     "ingest:pages:dry": "node src/cli/ingest-pages.js --dry-run",
     "ingest:dictionary": "node --env-file=../db/.env src/cli/ingest-dictionary.js",
-    "ingest:dictionary:dry": "node src/cli/ingest-dictionary.js --dry-run"
+    "ingest:dictionary:dry": "node src/cli/ingest-dictionary.js --dry-run",
+    "ingest:projections": "node --env-file=../db/.env src/cli/ingest-projections.js",
+    "ingest:projections:dry": "node src/cli/ingest-projections.js --dry-run"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

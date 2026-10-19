@@ -27,3 +27,8 @@ Thumbs.db
 # source documents and archives must never reach this public repo
 *.zip
 /advisor-knowledge/
+
+# the IFS projection export: the script contains a client secret, the export is loaded from outside the repo
+Export-IfsProjectionDocs*.ps1
+Projections-Export-Script-Files*
+ifs-projection-export-*/

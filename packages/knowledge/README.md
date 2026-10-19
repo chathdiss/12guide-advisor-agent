@@ -68,6 +68,27 @@ npm run ingest:dictionary -- --dir D:\Downloads\ifs-dictionary --version "IFS Cl
 
 The Advisor reaches it through two tools (see `apps/api/README.md`): `describe_entity` (base table, view and package, all columns of the view, the parent (header) entity or the detail entities, the other views) and `find_columns` (which column holds "planned delivery date"). A **parent key** (`TYPE_FLAG` P) is what makes an entity a detail of another one: `ORDER_NO` is a parent key in `CUSTOMER_ORDER_LINE` and a key in `CUSTOMER_ORDER`. To load the dictionary into the deployed database, run the same command with the `DATABASE_URL` of that database.
 
+## IFS API documentation (REST/OData projection cards)
+
+For questions such as "How do I create a customer order through REST?" the Advisor searches cards of the IFS projections (the REST/OData API): one card per part of an API, with the endpoint, keys, fields and actions, and a link to the IFS API documentation. The cards come from an export script that is run against an IFS environment by someone who has access; the script contains a client secret, so **it and its output stay outside the repository** (the root `.gitignore` also blocks them).
+
+1. Run the export (about 1.5 hours; `-Resume` continues after a stop). It makes a folder such as `ifs-projection-export-pojid9a-dev1` with `chunks.jsonl` and `chunks.csv` (the same cards), the structured tables (`projections.csv`, `entity_sets.csv`, `properties.csv`, `operations.csv`) and `summary.json`.
+2. Check `summary.json` (the `ok` count should be close to the number selected) and read a few cards.
+3. Load the cards:
+
+```powershell
+npm run ingest:projections:dry -- --dir D:/Gotli/advisor-knowledge/ifs-projection-export-pojid9a-dev1     # counts and shows 3 cards, no database
+npm run ingest:projections -- --dir D:/Gotli/advisor-knowledge/ifs-projection-export-pojid9a-dev1         # stores them
+```
+
+Our own knowledge tables are used (`knowledge_documents` and `knowledge_chunks`), not the `schema.sql` and `load.sql` that come with the export. Each card becomes one document with one chunk, stored under the origin **IFS API documentation** with its own `source_url`, the release (`25.2.10...` becomes `IFS Cloud 25R2`; `--version-label` sets another) and `source_type`, `projection_name`, `entity_set`, `ifs_version` and `chunk_id` in `meta`. The loader reads `chunks.jsonl` (or `chunks.csv`, with quoted cells and line breaks) by the names of the fields, writes 300 cards per query, skips a card that did not change, and `--prune` removes cards that left the export. For the deployed database run it with that database's `DATABASE_URL` (and `PGSSLMODE=require` for Render).
+
+How the Advisor uses them: the cards count as strong as the official documentation in the search; a question that asks about REST, OData, an endpoint, a projection, an entity set, an action or a payload also gets a search in the API cards alone, and those cards come first (`apps/api/src/api-docs.js`); the agent's `search_knowledge` tool has `source=api` for them. A question that names an entity ("customer order") also gets the cards named like it (`src/find-api.js`: the entity set `CustomerOrderSet`, or the projection `CustomerOrderHandling`), ranked by the other words of the question ("create", "release").
+
+**Entity set cards from `operations.csv`.** The first real export (25R2) has only one overview card per projection and no entity sets or properties (`entitySets` 0 in `summary.json`; no `entity_sets.csv` / `properties.csv`), so a card cannot say how to create a customer order. The loader therefore builds cards from `operations.csv` (`src/projection-operations.js`): one per entity set with the create and read calls, the key, the bound actions and functions and the navigation properties, plus cards for the actions and functions that are not bound to an entity set. They say "Fields (properties): not part of this export", so the agent does not invent fields. `--no-operations` loads only the overview cards. A newer export (second version of the script, with `entity_sets.csv` and `properties.csv`) already has one card per entity set with its fields (type, length), endpoint, child data, lookups and actions; the loader then does not build the operation cards (`--with-operations` forces them). Each card is stored whole as one chunk.
+
+**More fields.** The entity set cards of the export list only the first 100 attributes and 25 lookups ("(+98 more attributes)"). The loader reads the whole lists from `properties.csv` (streamed, 250 MB) and `entity_sets.csv` and adds "more fields" cards (`src/projection-attributes.js`, chunk type `entity_set_more`) with the missing attributes (type, length, allowed values) and lookups. A question that asks about fields, attributes, columns or properties gets the entity set card and all its "more fields" cards (`find-api.js`). `--no-attributes` skips them. The false line `Entity sets: (none)` of the overview cards is dropped. When the export is corrected, run the loader again: changed cards are updated. The other structured tables are not loaded; they can become exact lookups (like `describe_entity`) later.
+
 ## What is loaded now
 
 | Source | Origin shown in answers | Size |
