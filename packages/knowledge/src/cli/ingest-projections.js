@@ -112,6 +112,10 @@ if (args.includes("--prune")) {
 if (todo.length > 0 || args.includes("--prune")) {
   console.log("rebuilding the word statistics ...");
   await refreshTermStats(pool);
+  // after thousands of cards were added or removed the planner must see the new sizes, or the searches get slow (27 s instead of 9 s)
+  console.log("updating the table statistics ...");
+  await pool.query("VACUUM (ANALYZE) knowledge_documents");
+  await pool.query("VACUUM (ANALYZE) knowledge_chunks");
 }
 await pool.end();
 console.log(`\nStored in the database (${ORIGIN}): ${docs.length} cards in total, ${todo.length} written this time`);
