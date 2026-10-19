@@ -80,6 +80,20 @@ describe("the search tools", () => {
     assert.deepEqual(await tools.search({ query: " " }), []);
   });
 
+  it("puts the API cards named like the question first when the source is api", async () => {
+    const calls = [];
+    const tools = createTools({
+      db,
+      search: async (d, q, o) => (calls.push(o.origin), [hit("api/other", { origin: o.origin })]),
+      searchAll: async () => [],
+      loadFull: async () => new Map(),
+      findApi: async () => [hit("api/CustomerOrderSet", { origin: "IFS API documentation" })],
+    });
+    const out = await tools.search({ query: "create a customer order", source: "api" });
+    assert.deepEqual(calls, ["IFS API documentation"]);
+    assert.deepEqual(out.map((p) => p.path), ["api/CustomerOrderSet", "api/other"]);
+  });
+
   it("finds the files that are named like an entity, for the model files on request", async () => {
     const asked = [];
     const tools = createTools({ db, search: async () => [], searchAll: async () => [], loadFull: async () => new Map(), findNames: async (d, q) => (asked.push(q), [hit("order/CustomerOrder.plsql")]) });

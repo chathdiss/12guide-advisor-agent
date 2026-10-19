@@ -46,7 +46,7 @@ The backend still does the first search before it sends the question to n8n. Whe
 
 | Tool (n8n node) | Endpoint (POST, `X-Internal-Key`) | Arguments | What it does |
 |---|---|---|---|
-| `search_knowledge` | `<toolsUrl>/search_knowledge` | `query`, `source` (`all`, `documentation`, `code`, `community`) | Searches again with the agent's own words |
+| `search_knowledge` | `<toolsUrl>/search_knowledge` | `query`, `source` (`all`, `documentation`, `code`, `community`, `api`) | Searches again with the agent's own words |
 | `describe_entity` | `<toolsUrl>/describe_entity` | `name` | Reads the IFS data dictionary (`dictionary_lu`, `dictionary_column`, see `packages/knowledge/README.md`): base table, view and package, all the columns of the view with type, prompt and flags, the joins, the parent (header) entity or the detail entities, the other views. Without the dictionary, or for a unit that is not in it, it reads the entity's `.entity` model file (`packages/knowledge/src/entity.js`). The agent uses it to confirm that a column exists, and whether an entity is a header or a line, before it writes SQL |
 | `find_columns` | `<toolsUrl>/find_columns` | `query`, `entity` | Searches the dictionary for columns of entity views by the words of the column name or its prompt (the label in the screens), for example `planned delivery date`; `entity` limits it to one logical unit |
 | `find_files` | `<toolsUrl>/find_files` | `name`, `model` | The files named like an entity or package (`customer order` is `CustomerOrder...`); package code by default |

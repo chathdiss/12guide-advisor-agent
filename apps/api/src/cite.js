@@ -1,6 +1,7 @@
 // The agent cites the passages it was given as [1], [2], ... The numbers are only valid for one
 // request, so they are checked here: markers that do not match a passage are removed, the rest are
 // renumbered in order of first use, and the sources list holds exactly the passages that were cited.
+import { API_ORIGIN } from "./api-docs.js";
 
 const MARKER = /\s?\[(\d{1,2}(?:\s*,\s*\d{1,2})*)\]/g;
 const CODE = /(```[\s\S]*?```|`[^`\n]*`)/;
@@ -27,8 +28,11 @@ export function buildCitations(answer, passages) {
     return firstOfUrl.get(p.url);
   });
 
+  // the same number twice in a row ([1][1], also after two passages of one page were merged) is written once
+  const collapse = (text) => text.replace(/(\[\d{1,2}\])(?:\s?\1)+/g, "$1");
+
   const rewrite = (text) =>
-    text.replace(MARKER, (whole, list) => {
+    collapse(text.replace(MARKER, (whole, list) => {
       const numbers = [];
       for (const raw of list.split(",")) {
         const asked = Number(raw.trim()) - 1;
@@ -43,7 +47,7 @@ export function buildCitations(answer, passages) {
       }
       if (numbers.length === 0) return "";
       return `${whole.startsWith(" ") ? " " : ""}${numbers.map((n) => `[${n}]`).join("")}`;
-    });
+    }));
 
   // code is left alone: arr[1] in a code sample is not a citation
   const text = answer
@@ -125,7 +129,8 @@ export function repairCitations(answer, passages, { minMatch = 0.75, minGain = 0
 export function toSource(p) {
   return {
     title: p.title,
-    url: p.url ?? "",
+    // the link of an API card points to a development environment that needs a login: the card is used for the answer, the link is not shown
+    url: p.origin === API_ORIGIN ? "" : (p.url ?? ""),
     origin: p.origin,
     path: p.path,
     startLine: p.startLine,

@@ -3,6 +3,7 @@ import { createRetriever, searchBoth } from "./knowledge.js";
 import { createTools } from "./tools.js";
 import { createMemory } from "./memory.js";
 import { createRewriter } from "./rewrite.js";
+import { findApiCards } from "../../../packages/knowledge/src/find-api.js";
 import { findByName, findByTitle, loadDocumentTexts, searchKnowledge } from "../../../packages/knowledge/src/search.js";
 
 const port = Number(process.env.PORT) || 4000; // Render sets PORT itself
@@ -42,7 +43,9 @@ if (process.env.DATABASE_URL) {
     connectionString: process.env.DATABASE_URL,
     max: 5,
     connectionTimeoutMillis: 3000,
-    statement_timeout: 20000,
+    // a question made of very common words ("customer order fields") needs 10 to 20 seconds in the biggest sources; the limit stops a
+    // search that never ends, it must not cut one that is only slow
+    statement_timeout: Number(process.env.KNOWLEDGE_STATEMENT_TIMEOUT_MS) || 60000,
   });
   // A small model (Haiku) turns the question into search keywords; optional, the search works without it
   const rewrite = process.env.ANTHROPIC_API_KEY
@@ -57,9 +60,10 @@ if (process.env.DATABASE_URL) {
     searchAll: (pool, query, limit) => searchBoth(searchKnowledge, pool, query, limit, null, findByTitle, findByName),
     loadFull: loadDocumentTexts,
     findNames: findByName,
+    findApi: findApiCards,
   });
   config.maxToolCalls = Number(process.env.AGENT_MAX_TOOL_CALLS) || 6;
-  config.retrieve = createRetriever({ db, search: searchKnowledge, rewrite, loadFull: loadDocumentTexts, findTitles: findByTitle, findNames: findByName });
+  config.retrieve = createRetriever({ db, search: searchKnowledge, rewrite, loadFull: loadDocumentTexts, findTitles: findByTitle, findNames: findByName, findApi: findApiCards });
 } else {
   console.warn("Warning: DATABASE_URL is not set, so answers are not grounded in the approved sources.");
 }
