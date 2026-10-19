@@ -76,7 +76,9 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 const { default: pg } = await import("pg");
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
+// keepAlive: the statistics step runs for minutes on a small remote database without any traffic, and a silent connection is dropped
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2, keepAlive: true, keepAliveInitialDelayMillis: 10_000 });
+pool.on("error", (err) => console.error(`\n(a database connection was dropped: ${err.message})`));
 
 const known = new Map();
 (await pool.query("SELECT doc_key, meta->>'hash' AS hash FROM knowledge_documents WHERE source = $1", [SOURCE_ID])).rows.forEach((r) => known.set(r.doc_key, r.hash));
@@ -110,8 +112,13 @@ if (args.includes("--prune")) {
   console.log(`removed ${gone.length} cards that are no longer in the export`);
 }
 if (todo.length > 0 || args.includes("--prune")) {
-  console.log("rebuilding the word statistics ...");
-  await refreshTermStats(pool);
+  // --skip-word-stats: for a small remote database where this query (it reads all 400,000 chunks) ends with "Connection terminated
+  // unexpectedly". The searches count a word that is not in the statistics themselves, so they work without the new numbers.
+  if (args.includes("--skip-word-stats")) console.log("skipping the word statistics (--skip-word-stats)");
+  else {
+    console.log("rebuilding the word statistics ...");
+    await refreshTermStats(pool);
+  }
   // after thousands of cards were added or removed the planner must see the new sizes, or the searches get slow (27 s instead of 9 s)
   console.log("updating the table statistics ...");
   await pool.query("VACUUM (ANALYZE) knowledge_documents");
