@@ -42,6 +42,12 @@ describe("citations", () => {
 
   it("returns no sources when nothing is cited", () => {
     assert.deepEqual(buildCitations("Not found in the approved sources.", passages).sources, []);
+    // an API card is cited without its link (it points to a development environment that needs a login)
+    const api = { title: "CustomerOrderHandling / CustomerOrderSet", path: "ifs-projection-api/x", origin: "IFS API documentation", url: "https://dev.example/viewer", content: "c" };
+    const web = { title: "t", path: "p", origin: "IFS community", url: "https://community.example/t", content: "c" };
+    assert.deepEqual(buildCitations("A [1] B [2]", [api, web]).sources.map((s) => s.url), ["", "https://community.example/t"]);
+    // the same number twice in a row is written once, also when two passages of one page were merged
+    assert.equal(buildCitations("Lines are separate [1][1]. Both [1] [1] hold it [2][3][2].", passages).answer, "Lines are separate [1]. Both [1] hold it [2][3][2].");
   });
 });
 
@@ -223,6 +229,35 @@ describe("search merge", () => {
     const findTitles = async (db, phrases) => (phrases.length ? [titled] : []);
     const out = await searchBoth(search, {}, 'explain "Some Exact Title"', 4, null, findTitles);
     assert.deepEqual(out.map((x) => x.ref), ["t", "a"]);
+  });
+
+  it("puts the API card named like the question first when the question is about REST", async () => {
+    const card = { ref: "c", path: "ifs-projection-api/x", startLine: 1, content: "" };
+    const search = async () => [{ ref: "a", path: "a", startLine: 1, content: "" }];
+    const asked = [];
+    const findApi = async (db, q) => (asked.push(q), [card]);
+    const out = await searchBoth(search, {}, "How do I create a customer order through REST?", 4, null, undefined, undefined, findApi);
+    assert.equal(out[0].ref, "c");
+    assert.equal(asked.length, 1);
+    await searchBoth(search, {}, "How do I post a voucher?", 4, null, undefined, undefined, findApi);
+    assert.equal(asked.length, 1, "a question that is not about the API does not look for API cards");
+  });
+
+  it("keeps every API card that is named like the question, also when the other searches fill the list", async () => {
+    const card = (n) => ({ ref: `c${n}`, path: `ifs-projection-api/x${n}`, startLine: 1, content: "" });
+    const many = (p) => Array.from({ length: 12 }, (_, i) => ({ ref: `${p}${i}`, path: `${p}${i}`, startLine: 1, content: "" }));
+    const search = async (db, q, o) => (o.origin === "IFS API documentation" ? many("api") : many("doc"));
+    const findApi = async () => [1, 2, 3, 4, 5].map(card);
+    const out = await searchBoth(search, {}, "What fields does the customer order entity set have?", 12, null, undefined, undefined, findApi);
+    assert.deepEqual(out.slice(0, 5).map((x) => x.ref), ["c1", "c2", "c3", "c4", "c5"]);
+    assert.equal(out.length, 12);
+  });
+
+  it("leaves the API cards out of the general searches, because they have their own search and slow the others down", async () => {
+    const options = [];
+    const search = async (db, q, o) => (options.push(o), []);
+    await searchBoth(search, {}, "How do I post a voucher?", 4, ["voucher"]);
+    assert.ok(options.length >= 2 && options.every((o) => o.excludeOrigin === "IFS API documentation"));
   });
 
   it("takes the results of the question and of the keywords in turn, without repeats", async () => {

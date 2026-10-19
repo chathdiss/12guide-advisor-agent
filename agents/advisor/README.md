@@ -63,7 +63,7 @@ The backend does the first search, but one search can miss the point (for exampl
 
 | Tool node | URL it calls | What the agent uses it for |
 |---|---|---|
-| `search_knowledge` | `<toolsUrl>/search_knowledge` | Search again with its own words, in all sources or only documentation, code or community |
+| `search_knowledge` | `<toolsUrl>/search_knowledge` | Search again with its own words, in all sources or only documentation, code or community. With `source=api` it searches the cards of the IFS projections (the REST/OData API: endpoint, keys, fields, actions), with a link to the IFS API documentation. |
 | `describe_entity` | `<toolsUrl>/describe_entity` | What an entity is, from the IFS data dictionary (or its entity model file when the dictionary has no such entity): base table, view and package, all columns of the view with type, prompt and flags, the joins, the parent (header) entity or the detail entities. How the agent checks that a column exists and whether an entity is a header or a line before it writes SQL |
 | `find_columns` | `<toolsUrl>/find_columns` | Which column holds something, from the dictionary: search by the words of the column or its prompt (`planned delivery date`), optionally in one entity |
 | `find_files` | `<toolsUrl>/find_files` | The files named like an entity or package (package code by default; `model=true` for the entity, projection and client files) |

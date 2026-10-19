@@ -109,7 +109,8 @@ export function inflections(term) {
 // a chunk then only has to contain a quarter of the terms instead of half.
 // `stemming: false` turns the word forms off (for comparing).
 // `preferCode: true` (for a question about code) lets source code count as much as the official documentation.
-export async function searchKnowledge(db, query, { limit = 6, perDocument = 2, candidates = 30, keywords = null, origin = null, stemming = true, preferCode = false } = {}) {
+// `excludeOrigin` leaves one source out of the search (the 23,000 API cards, which have their own search and only slow down the others)
+export async function searchKnowledge(db, query, { limit = 6, perDocument = 2, candidates = 30, keywords = null, origin = null, excludeOrigin = null, stemming = true, preferCode = false } = {}) {
   const rewritten = Array.isArray(keywords) && keywords.length > 0 ? queryTerms(keywords.join(" "), 24) : [];
   const wanted = [...new Set([...(rewritten.length > 0 ? rewritten : queryTerms(query, 30)), ...guessIdentifiers(query)])];
   const specific = origin ? wanted.filter((t) => !CODE_FILLER.has(t)) : wanted;
@@ -177,7 +178,7 @@ export async function searchKnowledge(db, query, { limit = 6, perDocument = 2, c
            FROM knowledge_chunks c
            JOIN knowledge_documents d ON d.id = c.document_id
            CROSS JOIN (SELECT to_tsquery('simple', $1) AS query) qq
-          WHERE c.tsv @@ qq.query AND ($5::text IS NULL OR d.origin = $5)
+          WHERE c.tsv @@ qq.query AND ($5::text IS NULL OR d.origin = $5) AND ($7::text IS NULL OR d.origin <> $7)
        ) x
      ) ranked
       WHERE n <= $2
@@ -189,6 +190,7 @@ export async function searchKnowledge(db, query, { limit = 6, perDocument = 2, c
       terms.map(frequencyOf),
       origin,
       terms.map((t) => variantsOf(t).join(" | ")),
+      excludeOrigin,
     ],
   );
 
@@ -511,7 +513,13 @@ export function sizeFactor(r) {
   return words > NORMAL_WORDS ? Math.sqrt(NORMAL_WORDS / words) : 1;
 }
 
+// the IFS projection (REST/OData API) cards: see projection-cards.js
+export const API_DOC_ORIGIN = "IFS API documentation";
+
 export function sourceWeight(r, preferCode = false) {
+  // the API cards (23,000 of them) are neutral here: a question that is not about REST must not be filled with them. A question about
+  // REST gets its own search among them (see apps/api/src/api-docs.js), where the weight does not matter.
+  if (r.origin === API_DOC_ORIGIN) return 0;
   if (r.origin === "IFS documentation") return 4; // the official documentation outranks what people say about it
   // a question about code: the code is as good a source as the documentation, not a lesser one
   if (preferCode && r.origin === "IFS source code" && r.meta?.kind !== "field descriptions") return 4;

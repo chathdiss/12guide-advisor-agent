@@ -20,6 +20,7 @@ const SOURCES = {
   documentation: ["IFS documentation"],
   code: ["IFS source code"],
   community: ["IFS community", "IFS technical blog"],
+  api: ["IFS API documentation"], // the cards of the REST/OData projections: endpoint, keys, fields, actions
 };
 
 const clean = (v) => String(v ?? "").replace(/"/g, "'");
@@ -38,7 +39,7 @@ export function formatToolResult(passages, { note = "", callsLeft = null } = {})
 }
 
 // search: searchKnowledge, find: findByName, loadFull: loadDocumentTexts (all from packages/knowledge); `db` is a pg Pool
-export function createTools({ db, search, searchAll, loadFull, findNames = null }) {
+export function createTools({ db, search, searchAll, loadFull, findNames = null, findApi = null }) {
   const shape = async (found) => {
     const full = loadFull ? await loadFull(db, found.filter((r) => r.url).map((r) => r.path)) : new Map();
     return buildPassages(found, full, { budget: RESULT_CHARS });
@@ -179,6 +180,12 @@ export function createTools({ db, search, searchAll, loadFull, findNames = null 
         // the lists are taken in turn, so one origin does not fill the answer
         found = [];
         for (let i = 0; found.length < 8 && lists.some((l) => i < l.length); i++) for (const l of lists) if (l[i] && found.length < 8) found.push(l[i]);
+      }
+      // for the REST/OData cards the cards that are named like the thing asked about (CustomerOrderSet for "customer order") come first
+      if (String(source).toLowerCase() === "api" && findApi) {
+        const named = await findApi(db, text, { limit: 4 });
+        const seen = new Set(named.map((r) => r.ref ?? `${r.path}#${r.startLine}`));
+        found = [...named, ...found.filter((r) => !seen.has(r.ref ?? `${r.path}#${r.startLine}`))].slice(0, 8);
       }
       return shape(found);
     },

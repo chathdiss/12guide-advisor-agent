@@ -2,7 +2,7 @@ export type Source = {
   title: string;
   // empty for sources without a web page, such as source code: those are cited by file and lines
   url: string;
-  origin: "IFS documentation" | "IFS community" | "12Guide" | "IFS source code" | "IFS data dictionary" | "IFS technical blog";
+  origin: "IFS documentation" | "IFS community" | "12Guide" | "IFS source code" | "IFS data dictionary" | "IFS API documentation" | "IFS technical blog";
   path?: string;
   startLine?: number;
   endLine?: number;

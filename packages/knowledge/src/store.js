@@ -62,3 +62,32 @@ export async function refreshTermStats(pool) {
     );
   });
 }
+
+// Stores many one-chunk documents with three queries instead of three per document: for loaders that read tens of thousands of
+// short cards, where a round trip to a remote database would otherwise cost hours. Every document is { source, origin, docKey,
+// title, url, version, component, meta, content, searchText, lines }; all of them have the same `source` and `origin`.
+// A document that is already stored is replaced (its chunk is written again). Returns the number of documents stored.
+export async function storeCardsBulk(client, docs) {
+  if (docs.length === 0) return 0;
+  const { source, origin } = docs[0];
+  const col = (key) => docs.map((d) => d[key] ?? "");
+  const { rows } = await client.query(
+    `INSERT INTO knowledge_documents (source, doc_key, title, origin, url, version, component, meta, indexed_at)
+     SELECT $1, d.doc_key, d.title, $2, NULLIF(d.url, ''), d.version, d.component, d.meta::jsonb, now()
+       FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[]) AS d(doc_key, title, url, version, component, meta)
+     ON CONFLICT (source, doc_key) DO UPDATE
+       SET title = EXCLUDED.title, origin = EXCLUDED.origin, url = EXCLUDED.url, version = EXCLUDED.version,
+           component = EXCLUDED.component, meta = EXCLUDED.meta, indexed_at = now()
+     RETURNING id, doc_key`,
+    [source, origin, col("docKey"), col("title"), col("url"), col("version"), col("component"), docs.map((d) => JSON.stringify(d.meta ?? {}))],
+  );
+  const idOf = new Map(rows.map((r) => [r.doc_key, r.id]));
+  const ids = docs.map((d) => idOf.get(d.docKey));
+  await client.query("DELETE FROM knowledge_chunks WHERE document_id = ANY($1::bigint[])", [ids]);
+  await client.query(
+    `INSERT INTO knowledge_chunks (document_id, chunk_index, start_line, end_line, content, search_text)
+     SELECT * FROM unnest($1::bigint[], $2::int[], $3::int[], $4::int[], $5::text[], $6::text[])`,
+    [ids, docs.map(() => 0), docs.map(() => 1), docs.map((d) => d.lines ?? 1), col("content"), col("searchText")],
+  );
+  return docs.length;
+}
