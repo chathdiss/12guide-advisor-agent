@@ -1,15 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BookOpen, Menu, PanelLeft, Paperclip, Rocket, Settings2 } from "lucide-react";
+import { BookOpen, FileText, Menu, MessageSquare, PanelLeft, Paperclip, Rocket, Settings2, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useLanguage } from "@/components/language-provider";
 import { useChats } from "@/lib/chat/use-chats";
-import type { Message } from "@/lib/chat/types";
+import { quickReportDesignOf, type ChatKind, type Message } from "@/lib/chat/types";
 import { cn } from "@/lib/utils";
 import { BrandMark } from "./brand-mark";
 import { Composer } from "./composer";
+import { QuickReportNextSteps } from "./quick-report-next-steps";
 import { LanguageToggle } from "./language-toggle";
 import { MessageItem } from "./message-item";
 import { ScopeBar } from "./scope-bar";
@@ -19,6 +20,11 @@ import { ThinkingIndicator } from "./thinking-indicator";
 
 // one icon per example question: configuration, concepts, releases
 const EXAMPLE_ICONS = [Settings2, BookOpen, Rocket];
+// and for the Quick Reports tab: a description, a specification, parameters
+const QUICK_REPORT_ICONS = [FileText, Paperclip, SlidersHorizontal];
+
+const TABS: ChatKind[] = ["advisor", "quickReport"];
+const TAB_STORAGE_KEY = "advisor-agent:tab";
 
 // What an answer was given in: the messages before its question (as the chat request sent them), and whether files were
 // attached anywhere in the chat so far. A thumbs up uses it to save the answer so that it is reused only when it fits.
@@ -35,6 +41,9 @@ function chatContext(messages: Message[], answerIndex: number) {
 
 export function ChatApp() {
   const { lang, t } = useLanguage();
+  // Advisor Chat and Quick Reports: every tab has its own chats, and a question goes to the workflow of its tab only
+  const [tab, setTab] = useState<ChatKind>("advisor");
+  const quickReports = tab === "quickReport";
   const {
     chats,
     activeChat,
@@ -51,12 +60,40 @@ export function ChatApp() {
     changeScope,
     canRefresh,
     refreshAnswer,
-  } = useChats(lang);
+  } = useChats(lang, tab);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const messages = useMemo(() => activeChat?.messages ?? [], [activeChat]);
+
+  // Quick Reports only: when the latest answer holds a design, the next steps (approve, then Option A or B) are offered under it
+  const lastMessage = messages[messages.length - 1];
+  const nextStepsDesign = quickReports && !pending && lastMessage?.role === "assistant" && !lastMessage.error ? quickReportDesignOf(lastMessage.content) : null;
+
+  useEffect(() => {
+    // the tab that was open last time (the browser is the only place that is known, so read it after mount)
+    try {
+      if (localStorage.getItem(TAB_STORAGE_KEY) === "quickReport") {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setTab("quickReport");
+      }
+    } catch {
+      // storage blocked: start on Advisor Chat
+    }
+  }, []);
+
+  const selectTab = (next: ChatKind) => {
+    setTab(next);
+    setMobileOpen(false);
+    try {
+      localStorage.setItem(TAB_STORAGE_KEY, next);
+    } catch {
+      // not remembered
+    }
+  };
+
+  const tabLabel = (kind: ChatKind) => (kind === "quickReport" ? t.tabQuickReports : t.tabAdvisor);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -66,6 +103,7 @@ export function ChatApp() {
     <Sidebar
       chats={chats}
       activeId={activeId}
+      newLabel={quickReports ? t.newQuickReport : undefined}
       onNew={() => {
         newChat();
         setMobileOpen(false);
@@ -119,26 +157,59 @@ export function ChatApp() {
           >
             <PanelLeft className="size-4.5" />
           </Button>
-          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">{activeChat?.title ?? t.appName}</h1>
+          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">{activeChat?.title ?? (quickReports ? t.tabQuickReports : t.appName)}</h1>
           <LanguageToggle />
           <ThemeMenu />
         </header>
+        <div role="tablist" aria-label={t.tabsLabel} className="flex shrink-0 gap-1 border-b px-3 md:px-4">
+          {TABS.map((kind) => {
+            const selected = kind === tab;
+            const Icon = kind === "quickReport" ? FileText : MessageSquare;
+            return (
+              <button
+                key={kind}
+                type="button"
+                role="tab"
+                id={`tab-${kind}`}
+                aria-selected={selected}
+                aria-controls="tabpanel"
+                tabIndex={selected ? 0 : -1}
+                onClick={() => selectTab(kind)}
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+                  e.preventDefault();
+                  const next = TABS[(TABS.indexOf(kind) + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
+                  selectTab(next);
+                  document.getElementById(`tab-${next}`)?.focus();
+                }}
+                className={cn(
+                  "-mb-px flex flex-1 items-center justify-center gap-2 border-b-2 px-4 py-2.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring sm:flex-none",
+                  selected ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Icon className="size-4" />
+                {tabLabel(kind)}
+              </button>
+            );
+          })}
+        </div>
         <ScopeBar scope={scope} onChange={changeScope} disabled={pending} />
 
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div id="tabpanel" role="tabpanel" aria-labelledby={`tab-${tab}`} className="min-h-0 flex-1 overflow-y-auto">
           {messages.length === 0 ? (
             <div className="mx-auto flex h-full max-w-3xl flex-col items-center justify-center gap-8 px-4 py-8 text-center">
               <div className="flex flex-col items-center gap-4">
                 <BrandMark className="size-14 rounded-2xl" />
                 <div>
-                  <h2 className="text-2xl font-semibold tracking-tight">{t.welcomeTitle}</h2>
-                  <p className="mt-1.5 text-sm text-muted-foreground">{t.welcomeSub}</p>
+                  <h2 className="text-2xl font-semibold tracking-tight">{quickReports ? t.quickReportTitle : t.welcomeTitle}</h2>
+                  <p className="mt-1.5 text-sm text-muted-foreground">{quickReports ? t.quickReportSub : t.welcomeSub}</p>
                 </div>
               </div>
 
               <ul className="grid w-full gap-3 sm:grid-cols-3">
-                {t.examples.map((question, i) => {
-                  const Icon = EXAMPLE_ICONS[i % EXAMPLE_ICONS.length];
+                {(quickReports ? t.quickReportExamples : t.examples).map((question, i) => {
+                  const icons = quickReports ? QUICK_REPORT_ICONS : EXAMPLE_ICONS;
+                  const Icon = icons[i % icons.length];
                   return (
                     <li key={question}>
                       <button
@@ -147,7 +218,7 @@ export function ChatApp() {
                       >
                         <span className="flex items-center gap-2 text-xs font-medium text-primary">
                           <Icon className="size-4" />
-                          {t.exampleLabels[i]}
+                          {(quickReports ? t.quickReportLabels : t.exampleLabels)[i]}
                         </span>
                         <span className="text-sm leading-snug">{question}</span>
                       </button>
@@ -158,7 +229,7 @@ export function ChatApp() {
 
               <p className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Paperclip className="size-3.5" />
-                {t.hintFiles}
+                {quickReports ? t.quickReportHint : t.hintFiles}
               </p>
             </div>
           ) : (
@@ -179,13 +250,14 @@ export function ChatApp() {
                   />
                 );
               })}
+              {nextStepsDesign && <QuickReportNextSteps key={messages[messages.length - 1].id} design={nextStepsDesign} />}
               {pending && <ThinkingIndicator />}
               <div ref={bottomRef} />
             </div>
           )}
         </div>
 
-        <Composer onSend={sendMessage} disabled={pending} />
+        <Composer key={tab} onSend={sendMessage} disabled={pending} placeholder={quickReports ? t.quickReportPlaceholder : undefined} />
       </main>
     </div>
   );

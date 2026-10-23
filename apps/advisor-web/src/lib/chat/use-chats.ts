@@ -4,15 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { STRINGS, type ApiErrorCode, type Lang } from "../i18n";
 import type { ChatRequest, ChatResponse } from "./api-types";
 import { toMeta, type PendingAttachment } from "./attachments";
+import { API_BASE as CHAT_API_BASE } from "@/lib/api-base";
 import { loadScope, memoryApi, saveScope, type Scope } from "@/lib/memory/client";
-import type { Chat, Message } from "./types";
+import { chatKind, type Chat, type ChatKind, type Message } from "./types";
 
 const STORAGE_KEY = "advisor-agent:chats:v1";
-
-// A complete answer takes a minute or more, longer than a website host such as Netlify keeps a forwarded request open.
-// When NEXT_PUBLIC_CHAT_API_URL is set (read when the site is built), the chat goes straight to the backend; the
-// backend must list this website in CORS_ORIGINS. Without it the chat uses this site's own /api/chat.
-const CHAT_API_BASE = (process.env.NEXT_PUBLIC_CHAT_API_URL ?? "").trim().replace(/\/+$/, "");
 
 const uid = () => crypto.randomUUID();
 
@@ -33,11 +29,16 @@ function save(chats: Chat[]) {
   }
 }
 
-export function useChats(lang: Lang) {
+// One hook keeps all chats (one stored list, one copy on the server) and shows those of the tab `kind`: every tab has its own list of chats,
+// its own open chat and its own pending answer, and a chat never changes tab.
+export function useChats(lang: Lang, kind: ChatKind = "advisor") {
   const [chats, setChats] = useState<Chat[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeIds, setActiveIds] = useState<Record<ChatKind, string | null>>({ advisor: null, quickReport: null });
   const [ready, setReady] = useState(false);
-  const [pending, setPending] = useState(false);
+  // the tabs that are waiting for an answer
+  const [pendingKinds, setPendingKinds] = useState<ChatKind[]>([]);
+  const pending = pendingKinds.includes(kind);
+  const anyPending = pendingKinds.length > 0;
   // the customer and IFS version last chosen: a new chat starts with them
   const [defaultScope, setDefaultScope] = useState<Scope>({ customer: "", ifsVersion: "" });
   // updatedAt of every chat as the server last had it; a chat that differs still has to be sent
@@ -82,7 +83,7 @@ export function useChats(lang: Lang) {
 
   // Send new and changed chats to the server a moment after the last change
   useEffect(() => {
-    if (!ready || !serverUp.current || pending) return;
+    if (!ready || !serverUp.current || anyPending) return;
     const timer = setTimeout(() => {
       for (const chat of chats) {
         if (synced.current.get(chat.id) === chat.updatedAt) continue;
@@ -92,9 +93,12 @@ export function useChats(lang: Lang) {
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [chats, ready, pending]);
+  }, [chats, ready, anyPending]);
 
-  const activeChat = chats.find((c) => c.id === activeId) ?? null;
+  const activeId = activeIds[kind];
+  const setActiveId = useCallback((id: string | null) => setActiveIds((prev) => ({ ...prev, [kind]: id })), [kind]);
+  const kindChats = useMemo(() => chats.filter((c) => chatKind(c) === kind), [chats, kind]);
+  const activeChat = kindChats.find((c) => c.id === activeId) ?? null;
   // what applies now: the open chat's choice, or the last choice for a chat that is not started yet
   const customer = activeChat ? (activeChat.customer ?? "") : defaultScope.customer;
   const ifsVersion = activeChat ? (activeChat.ifsVersion ?? "") : defaultScope.ifsVersion;
@@ -110,11 +114,11 @@ export function useChats(lang: Lang) {
     [scope, activeId],
   );
 
-  const newChat = useCallback(() => setActiveId(null), []);
+  const newChat = useCallback(() => setActiveId(null), [setActiveId]);
 
   const deleteChat = useCallback((id: string) => {
     setChats((prev) => prev.filter((c) => c.id !== id));
-    setActiveId((cur) => (cur === id ? null : cur));
+    setActiveIds((prev) => ({ advisor: prev.advisor === id ? null : prev.advisor, quickReport: prev.quickReport === id ? null : prev.quickReport }));
     synced.current.delete(id);
     if (serverUp.current) memoryApi.deleteChat(id);
   }, []);
@@ -133,10 +137,11 @@ export function useChats(lang: Lang) {
       attachments: PendingAttachment[],
       history: { role: "user" | "assistant"; content: string }[],
       chosen: Scope,
+      askKind: ChatKind,
       fresh = false,
     ) => {
       const t = STRINGS[lang];
-      setPending(true);
+      setPendingKinds((prev) => [...prev, askKind]);
 
       let reply: Message;
       try {
@@ -151,6 +156,7 @@ export function useChats(lang: Lang) {
             ifsVersion: chosen.ifsVersion || undefined,
             history,
             fresh: fresh || undefined,
+            mode: askKind,
             attachments: attachments.map(({ name, kind, mimeType, data }) => ({ name, kind, mimeType, data })),
           } satisfies ChatRequest),
         });
@@ -169,6 +175,7 @@ export function useChats(lang: Lang) {
           tierReason,
           lessons: lessons && lessons.length > 0 ? lessons : undefined,
           cached,
+          mode: askKind,
           createdAt: Date.now(),
         };
       } catch (err) {
@@ -179,7 +186,7 @@ export function useChats(lang: Lang) {
             : err instanceof Error
               ? err.message
               : t.genericError;
-        reply = { id: uid(), role: "assistant", content: msg, error: true, createdAt: Date.now() };
+        reply = { id: uid(), role: "assistant", content: msg, error: true, mode: askKind, createdAt: Date.now() };
       }
 
       setChats((prev) =>
@@ -187,7 +194,10 @@ export function useChats(lang: Lang) {
           c.id === target ? { ...c, messages: [...c.messages, reply], updatedAt: Date.now() } : c,
         ),
       );
-      setPending(false);
+      setPendingKinds((prev) => {
+        const at = prev.indexOf(askKind);
+        return at < 0 ? prev : prev.filter((_, i) => i !== at);
+      });
     },
     [lang],
   );
@@ -204,6 +214,7 @@ export function useChats(lang: Lang) {
         role: "user",
         content: question,
         attachments: attachments.length > 0 ? attachments.map(toMeta) : undefined,
+        mode: kind,
         createdAt: now,
       };
       let chatId = activeId;
@@ -212,7 +223,7 @@ export function useChats(lang: Lang) {
         chatId = uid();
         const title = question.length > 40 ? `${question.slice(0, 40)}…` : question;
         setChats((prev) => [
-          { id: chatId!, title, messages: [userMsg], createdAt: now, updatedAt: now, ...scope },
+          { id: chatId!, title, messages: [userMsg], createdAt: now, updatedAt: now, kind, ...scope },
           ...prev,
         ]);
         setActiveId(chatId);
@@ -229,9 +240,9 @@ export function useChats(lang: Lang) {
         .filter((m) => !m.error)
         .map((m) => ({ role: m.role, content: m.content }));
 
-      await ask(chatId, question, attachments, history, scope);
+      await ask(chatId, question, attachments, history, scope, kind);
     },
-    [activeId, pending, chats, lang, ask, scope],
+    [activeId, pending, chats, lang, ask, scope, kind, setActiveId],
   );
 
   // Can the last answer be requested again? Not when files were attached: their content is not kept.
@@ -251,8 +262,8 @@ export function useChats(lang: Lang) {
       .slice(0, -2)
       .filter((m) => !m.error)
       .map((m) => ({ role: m.role, content: m.content }));
-    await ask(activeChat.id, asked.content, [], history, scope);
-  }, [canRetry, activeChat, ask, scope]);
+    await ask(activeChat.id, asked.content, [], history, scope, kind);
+  }, [canRetry, activeChat, ask, scope, kind]);
 
   // A saved answer can be replaced by a new one (it is the first answer of the chat, and the last message)
   const canRefresh = (() => {
@@ -264,13 +275,13 @@ export function useChats(lang: Lang) {
     if (!canRefresh || !activeChat) return;
     const asked = activeChat.messages[0];
     setChats((prev) => prev.map((c) => (c.id === activeChat.id ? { ...c, messages: c.messages.slice(0, -1) } : c)));
-    await ask(activeChat.id, asked.content, [], [], scope, true);
-  }, [canRefresh, activeChat, ask, scope]);
+    await ask(activeChat.id, asked.content, [], [], scope, kind, true);
+  }, [canRefresh, activeChat, ask, scope, kind]);
 
   return {
     canRefresh,
     refreshAnswer,
-    chats,
+    chats: kindChats,
     activeChat,
     activeId,
     setActiveId,
