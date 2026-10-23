@@ -118,3 +118,47 @@ The tests use a fake n8n server, so they need no keys or running services.
 - Each client is limited per minute, to protect the Claude budget from loops and misuse. The counter is in memory and resets on restart.
 - The log records only metadata (status, tier, duration), never questions or answers.
 - There is no login yet, so anyone who knows the address can use it. Keep the address within the test group and set a spending limit in the Anthropic console.
+
+## Quick reports: what happens after a design is approved
+
+In the Quick Reports tab, when the latest answer holds a design, the page offers the next steps under it: **Approve design**, and then a choice between two options. Nothing is created, exported or opened before the consultant chooses, and the SQL status stays `not run` (the page separates the data dictionary check, the offline design checks and a real run, which has not happened).
+
+| | Option A: create it in IFS | Option B: export file |
+|---|---|---|
+| What it does | Opens the IFS environment with Playwright, opens the New Report dialog, fills it in with the design, and saves it. IFS gives the report its own id | Makes the export file (XML) that you import into IFS yourself: Quick Reports page > Import > Browse XML |
+| Status | Implemented, but its selectors are **not verified against IFS yet**. Until you switch the rehearsal off, it fills in the dialog and cancels it: **nothing is saved**. The SQL is never run | Implemented. The file has the structure of a real IFS export and is checked offline; whether your IFS accepts it can only be seen by importing it (test with a harmless report first) |
+| Needs | `IFS_AUTOMATION=on`, `IFS_BASE_URL`, `IFS_STORAGE_STATE`, Playwright (below); `IFS_REHEARSAL=off` to really create | Nothing: it never opens IFS |
+
+**Rehearsal (Option A).** `IFS_REHEARSAL` is on unless it is set to `off`. A rehearsal opens a visible browser, opens the New Report dialog, fills in title, type, query and comments, reads them back, and presses Cancel. It shows whether the screens are found as expected, and saves nothing. The confirmation in the page says which of the two it will do. Switch it off only after a rehearsal has worked. A real run is done without a window unless `IFS_HEADED=on` is set: set it for the first real run, so that you can watch it.
+
+**Checked on IFS (Option A):** on 2026-10-23 a real run created a test report (ZZ TEST - DIALOG CHECK) through the New Report dialog on the dev environment, and read it back from its detail page (title and SQL); the rehearsal had worked first. Category and domain are left empty, and the SQL is not run. One earlier attempt lost the answer of the backend and could not be explained; if a run ends without an answer, look in the Quick Reports list in IFS before trying again, and in the backend log for run_started / run_done.
+
+**The export file (Option B).** The structure is that of a real IFS export of one SQL quick report; the rules come from the IFS source (`Import_Reports__`): the title has at most 50 characters and must be unique; a quick report has one SQL statement; category and domain are left empty (choose them in IFS). IFS takes `QUICK_REPORT_ID` from the file, so a new report gets an id from a high range that IFS does not use, made from the title (the same title always gives the same id). If IFS asks whether to replace an existing report when you import, answer No unless you mean to update it. **Checked on IFS:** on 2026-10-23 a test file from this option (ZZ TEST - XML CHECK, id in the high range) was imported on the dev environment, and the report appeared in the Quick Reports list as type SQL Statement, with no category or domain.
+
+Endpoints: `POST /api/quick-report/check` (read-only: is the design ready, and what each option needs) `POST /api/quick-report/run` (only with a named option, `approved: true`, the fingerprint of the approved design, and for Option A `confirmed: true`). and `POST /api/quick-report/test` (the test run below: needs `approved: true`, `confirmed: true`, the fingerprint of the approved design, the report id, and the values of the parameters).
+
+### Test run: running the SQL in IFS (read-only)
+
+After a report exists in IFS (Option A created it, or you imported the Option B file), the result panel offers **Test run in IFS**. IFS runs the SQL of the report (a quick report is a SELECT that IFS runs with your rights), and the page shows what IFS returns: whether the columns are those of the design, the first 20 rows, how long it took, an error if IFS gives one, and a screenshot of the result. The status of the real environment then changes from `not run` to what happened (for example "ran on your-environment: 20 row(s) read in 2.1 s, columns match the design"). An error of IFS, a timeout, or a rehearsal leave it at `not run`.
+
+- **You type the values.** The panel shows one box for each parameter, and the id of the report (read from the new report for Option A, and the id in the file for Option B). A mandatory parameter needs a value; an empty optional one gets a warning, because it may return all rows. A value may not contain quotes, semicolons, ampersands or comment marks (it is put into the SQL as text), and at most 100 characters.
+- **Only the approved report is run.** The run page of the report must have the title of the approved design, or Execute is not pressed.
+- **Rehearsal first.** `IFS_TEST_EXECUTE` is off unless it is set to `on`. Without it a test run opens the report in a visible browser, finds the parameters and fills them in, and does **not** press Execute: nothing is run. Use it to see that the screens are found, then set `IFS_TEST_EXECUTE=on` (and restart the backend) to run for real. The confirmation in the page says which of the two it will do.
+- **The results stay on the page.** The rows and the screenshot can contain customer data. They are shown to you only: they are not logged (the log has counts and timings), not stored, not part of the chat history, and not sent to the AI model.
+- **Not known until it has been tried:** how IFS lays out the result. The result is looked for as a grid whose headers are the column labels of the design. When it cannot be read, the report is still run and the screenshot shows what IFS displays.
+
+### Setting up Option A (on the computer that runs the automation only)
+
+1. In `apps/api`: `npm install playwright` and then `npx playwright install chromium`.
+2. Sign in to IFS yourself and save the session: `npm run ifs:login`. It asks you to type `yes`, opens a browser at IFS, and waits. Sign in there (including any second step), wait until the IFS home page is open, and press Enter in the terminal: the session is saved then, and not before. Close the browser by typing `q`, not by closing the window first. The file (`IFS_STORAGE_STATE`) must be outside the repository; the command refuses a folder inside it. The backend never types a user name or a password, never reads the file itself (Playwright does), and the command never shows what is in it.
+3. In `.env` set `IFS_AUTOMATION=on`, `IFS_BASE_URL` (https address of the environment) and `IFS_STORAGE_STATE` (the path of the file), and restart the backend. Never switch `IFS_AUTOMATION` on in the hosted backend.
+4. A session lasts some hours (the login cookie of IFS has an end time). When it has expired, IFS shows its sign-in page, the run says "IFS needs a new signed-in session" and creates nothing; run `npm run ifs:login` again.
+
+### Looking at the IFS Quick Reports screens first (read-only inspection)
+
+Before the steps that create a quick report can be built, the screens have to be looked at. `npm run ifs:inspect` (in `apps/api`) does that without changing anything in IFS:
+
+1. It checks the setup (`IFS_BASE_URL`, `IFS_STORAGE_STATE`, `IFS_INSPECTION_DIR`, Playwright and Chromium), prints what it will do, and asks you to type `yes`. Anything else cancels, and IFS is not opened. It does not need `IFS_AUTOMATION=on`.
+2. A visible browser opens with your saved session. **You** navigate to the Quick Reports screens. The script never clicks, types, selects or runs a script in the page. Do not press New, Save, Delete or Run in IFS while you look around: it cannot block those, because IFS reads its data with POST requests too.
+3. Wait until the page has finished loading, then press Enter in the terminal to record the page that is open (its path, its title, and the roles and labels of its controls). Type `q` to quit. If you close the browser, nothing else happens. The recording also has the number of elements of each role (so that what is not recorded can be seen), the number of grid cells that were left out, and for controls without a name (icon buttons) their tooltip, test id, class hint and place on the page. Nothing is clicked or hovered to find these out.
+4. The recording goes to `IFS_INSPECTION_DIR`, which must be outside the repository: a `.json` file and a readable `.outline.txt`. No screenshots are taken. Grid cells and everything in them, text, field values, link addresses, and the query and key parts of the page address are left out, and long numbers and e-mail addresses in labels are masked. A button or link label can still hold a name now and then, so read the file before you share it.
