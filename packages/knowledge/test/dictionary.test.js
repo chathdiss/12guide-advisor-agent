@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { strToU8, zipSync } from "fflate";
 import { parseColumnRows, parseLuRows } from "../src/dictionary.js";
-import { columnHitsText, luSummary, referenceTarget, shortType } from "../src/dictionary-summary.js";
+import { columnEntries, columnHitsText, luSummary, referenceTarget, shortType } from "../src/dictionary-summary.js";
 import { columnIndex, decodeXml, readXlsxRows } from "../src/xlsx.js";
 
 // A minimal .xlsx file: the workbook, its relationships, the shared strings and one sheet
@@ -132,7 +132,8 @@ describe("the text of a logical unit", () => {
     assert.match(text, /^Logical unit CustomerOrderLine \("Customer Order Line"\), module ORDER, type EntityWithState, from the IFS data dictionary \(IFS Cloud 25R2\)\./);
     assert.match(text, /base table CUSTOMER_ORDER_LINE_TAB, base view CUSTOMER_ORDER_LINE, base package CUSTOMER_ORDER_LINE_API/);
     assert.match(text, /DETAIL entity \(it has a parent key\). Parent \(header\) entity: CustomerOrder \(CUSTOMER_ORDER\), joined on ORDER_NO/);
-    assert.match(text, /ORDER_NO \(string\(20\), parent key\), LINE_NO \(string\(20\), key\), CONTRACT \(string\(20\), prompt "Site", mandatory\), DATE_ENTERED \(datetime\), OBJSTATE \(system column\)/);
+    assert.match(text, /ORDER_NO \(string\(20\), parent key\), LINE_NO \(string\(20\), key\), CONTRACT \(string\(20\), prompt "Site", mandatory\), DATE_ENTERED \(datetime\)\./);
+    assert.match(text, /System columns that IFS adds: OBJSTATE\./);
     assert.doesNotMatch(text, /prompt "Date Entered"/);
   });
 
@@ -150,6 +151,25 @@ describe("the text of a logical unit", () => {
     assert.match(text, /Enumerations: ADDR_FLAG -> CustOrdAddressFlag/);
     assert.match(text, /Other views of this logical unit: CUSTOMER_ORDER_LOV, CUSTOMER_ORDER_PUB/);
     assert.match(text, /Other logical units whose name starts like this one: CustomerOrderAddress/);
+  });
+
+  it("writes a column and its _DB twin as one entry, and loses no column", () => {
+    const columns = [
+      { column_name: "ORDER_NO", datatype: "STRING(12)/UPPERCASE", prompt: "Order No", type_flag: "K" },
+      { column_name: "ADDR_FLAG", datatype: "STRING(20)", prompt: "Address Flag", enumeration: "GenYesNo" },
+      { column_name: "ADDR_FLAG_DB", datatype: "STRING(20)", prompt: "Address Flag" },
+      { column_name: "LAST_DB", datatype: "STRING(5)", prompt: "A column that only looks like a twin" },
+      { column_name: "OBJID", datatype: "" },
+      { column_name: "OBJVERSION", datatype: "" },
+    ];
+    const { entries, system } = columnEntries(columns);
+    assert.deepEqual(entries, ["ORDER_NO (string(12), key)", 'ADDR_FLAG (string(20), prompt "Address Flag") +DB', 'LAST_DB (string(5), prompt "A column that only looks like a twin")']);
+    assert.deepEqual(system, ["OBJID", "OBJVERSION"]);
+    const text = luSummary({ lu, columns });
+    assert.match(text, /All 6 columns/, "the count is of the columns of the view, as before");
+    assert.match(text, /ADDR_FLAG \(string\(20\), prompt "Address Flag"\) \+DB/);
+    assert.ok(!text.includes("ADDR_FLAG_DB (string"), "the twin is not listed again");
+    assert.match(text, /System columns that IFS adds: OBJID, OBJVERSION\./);
   });
 
   it("says that a unit without a base view is not table-based, and caps a very long column list", () => {

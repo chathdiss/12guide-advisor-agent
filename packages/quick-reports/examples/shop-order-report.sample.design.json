@@ -1,0 +1,322 @@
+{
+  "designVersion": 1,
+  "status": "partial",
+  "spec": {
+    "title": "Sample Shop Order Report per week",
+    "customer": "Sample Customer",
+    "ticket": "TEST-002",
+    "specRevision": "A1 (sample)",
+    "file": "sample-shop-order-report.docx"
+  },
+  "type": "SQL quick report",
+  "report": {
+    "title": "Sample Shop Order Report per week",
+    "category": null,
+    "permissionSets": "Not in the specification",
+    "purpose": "The labour absorption in a week per work centre: for each closed shop order with labour postings in the week, the actual labour cost from the general ledger, spread over the work centres in proportion to the standard labour cost of the routing operations."
+  },
+  "parameters": [
+    {
+      "name": "Company",
+      "label": "Company",
+      "type": "string",
+      "mandatory": true,
+      "default": "100",
+      "usedAs": "'&Company'"
+    },
+    {
+      "name": "FromDate",
+      "label": "From Date",
+      "type": "date",
+      "mandatory": true,
+      "default": "start date of the previous week",
+      "usedAs": "'&FromDate'"
+    },
+    {
+      "name": "ToDate",
+      "label": "To Date",
+      "type": "date",
+      "mandatory": true,
+      "default": "end date of the previous week",
+      "usedAs": "'&ToDate'"
+    }
+  ],
+  "formulas": [
+    {
+      "name": "Standard labour cost per unit, per routing operation (specification, section 5.1)",
+      "text": "Standard Labour Cost per unit per operation =\n  Setup Labour rate x Setup Crew Size x (Labour Setup Time / Std Lot Size)\n+ Setup Overhead rate x (Labour Setup Time / Std Lot Size)\n+ Labour rate x Crew Size x Labour run factor\n+ Overhead rate x Labour run factor",
+      "notes": [
+        "The rates come from cost set 1 of the labour class: the Setup Labour Class gives the setup rates, the Labour Class gives the run rates.",
+        "As written, the overhead terms are not multiplied by a crew size.",
+        "The operations that share a work centre are added up (two operations can be on one work centre)."
+      ],
+      "workedExample": "part TEST-PART-001, std lot size 10, labour class DEF (rate 50, overhead 60). Operation 1 on WC 01 (setup crew 5, crew 3, setup time 1, run factor 2) = 25 + 6 + 300 + 120 = 451. Operation 2 on WC 02 (setup crew 7, crew 4, setup time 2, run factor 3) = 70 + 12 + 600 + 180 = 862. The values are read from the screenshots of the specification; they are not a result of the report."
+    },
+    {
+      "name": "Actual labour cost per work centre (specification, section 5.1)",
+      "text": "Actual Cost per work centre =\n  Actual Labour Cost from GL x (Standard Labour Cost per unit of the work centre / Sum of the Standard Labour Cost per unit of all work centres)",
+      "notes": [
+        "The actual labour cost of a shop order is spread in the proportion of the standard cost. The specification does not say what to show when the standard costs add up to zero (division by zero)."
+      ]
+    },
+    {
+      "name": "Actual labour cost from the general ledger",
+      "text": "Labour Cost (from GL) = (sum of the field Amount of the postings of the shop order) x -1",
+      "notes": [
+        "The postings are those of the company, with transaction code M42, M58, M124, M125, M132 or M133 and a voucher date between the From Date and the To Date."
+      ]
+    },
+    {
+      "name": "Standard labour cost of the part, from Part Cost",
+      "text": "Standard Labour Cost per unit = Labour Setup cost + Labour Overhead cost of the manufactured part (Part Cost window, cost set 1)",
+      "notes": [
+        "The screenshot marks the cost buckets 201 (Labor Setup Cost) and 221 (Labor Overhead Cost). The bucket 200 (Labor Runtime Cost) is not marked, although the formula above has run-time labour terms.",
+        "The specification notes that this should equal the actual labour cost per part, because variance postings at shop order closure post the difference."
+      ]
+    }
+  ],
+  "dataSources": [
+    {
+      "id": "work-centres",
+      "status": "ready",
+      "purpose": "The work centres of all sites of the company: each of them is a pair of columns in the report.",
+      "entitiesUsed": [
+        {
+          "view": "WORK_CENTER",
+          "role": "work centre number and description per site",
+          "inDataDictionary": true
+        },
+        {
+          "view": "COMPANY_SITE",
+          "role": "the sites of the company",
+          "inDataDictionary": true
+        }
+      ],
+      "sql": "SELECT w.contract AS \"Site\",\n       w.work_center_no AS \"Work Centre\",\n       w.description AS \"Description\"\n  FROM work_center w\n  JOIN company_site cs\n    ON cs.contract = w.contract\n WHERE cs.company = '&Company'\n ORDER BY w.contract, w.work_center_no",
+      "assumptions": [
+        "All work centres of the sites are taken, active or not: the specification does not mention the validity."
+      ]
+    },
+    {
+      "id": "closed-shop-orders",
+      "status": "draft",
+      "purpose": "The closed shop orders of the company with their completed quantity. The report keeps those that have labour postings in the period (see gl-labour-postings).",
+      "entitiesUsed": [
+        {
+          "view": "SHOP_ORD",
+          "role": "shop order, part, status, completed quantity, routing revision",
+          "inDataDictionary": true
+        },
+        {
+          "view": "COMPANY_SITE",
+          "role": "the sites of the company",
+          "inDataDictionary": true
+        }
+      ],
+      "sql": "SELECT so.order_no AS \"Shop Order\",\n       so.release_no AS \"Release No\",\n       so.sequence_no AS \"Sequence No\",\n       so.part_no AS \"Part No\",\n       so.contract AS \"Site\",\n       so.state AS \"Status\",\n       so.qty_complete AS \"Completed Qty\",\n       so.routing_revision AS \"Routing Revision\",\n       so.close_date AS \"Close Date\"\n  FROM shop_ord so\n  JOIN company_site cs\n    ON cs.contract = so.contract\n WHERE cs.company = '&Company'\n   AND so.state = 'Closed'",
+      "assumptions": [
+        "The status is selected by its displayed value 'Closed'; the first test run confirms it (a database value or another language can differ).",
+        "Shop order number, release number and sequence number together identify a shop order; the specification only says Shop Order number."
+      ]
+    },
+    {
+      "id": "standard-part-cost",
+      "status": "draft",
+      "purpose": "The standard labour cost per unit of each part: the labour setup cost plus the labour overhead cost of cost set 1.",
+      "entitiesUsed": [
+        {
+          "view": "PART_COST_BUCKET",
+          "role": "cost buckets of a part per cost set (bucket level cost and accumulated cost)",
+          "inDataDictionary": true
+        }
+      ],
+      "sql": "SELECT pcb.contract AS \"Site\",\n       pcb.part_no AS \"Part No\",\n       SUM(pcb.bucket_level_cost) AS \"Standard Labour Cost per unit\"\n  FROM part_cost_bucket pcb\n WHERE pcb.cost_set = 1\n   AND pcb.cost_bucket_id IN ('201', '221')\n GROUP BY pcb.contract, pcb.part_no",
+      "assumptions": [
+        "The cost buckets are 201 (Labor Setup Cost) and 221 (Labor Overhead Cost), as marked in the screenshot of the specification.",
+        "The Level Cost is used, not the Accumulated Cost.",
+        "The key of PART_COST_BUCKET also holds the structure alternative, routing alternative, bucket level and top level part; adding the rows of all of them could count a cost twice. The first test run shows it."
+      ]
+    },
+    {
+      "id": "gl-labour-postings",
+      "status": "blocked",
+      "purpose": "The labour postings of the period per shop order: from them the distinct shop orders and the actual labour cost (sum of the amounts x -1).",
+      "blockedBy": [
+        "No column that holds the shop order number was found on the voucher row views of the data dictionary (GEN_LED_VOUCHER_ROW and the similar views). Which field of the GL Voucher Rows Analysis window shows the shop order?",
+        "Which column holds the transaction code (M42, M58, M124, M125, M132, M133): TRANS_CODE of the voucher row, or the posting event code (STR_CODE) of MPCCOM_ACCOUNTING?"
+      ],
+      "knownParts": [
+        "Company = the Company parameter.",
+        "Transaction code in (M42, M58, M124, M125, M132, M133).",
+        "Voucher date between the From Date and the To Date (GEN_LED_VOUCHER_ROW.VOUCHER_DATE).",
+        "The amount is GEN_LED_VOUCHER_ROW.AMOUNT (signed); there are also DEBET_AMOUNT and CREDIT_AMOUNT.",
+        "GEN_LED_VOUCHER_ROW has COMPANY, VOUCHER_TYPE, ACCOUNTING_YEAR, VOUCHER_NO, ROW_NO, TRANS_CODE, AMOUNT, VOUCHER_DATE, TEXT, REFERENCE_NUMBER and the code parts B to J; MPCCOM_ACCOUNTING has the same voucher keys and STR_CODE, but neither view has a shop order column in the data dictionary."
+      ],
+      "entitiesUsed": [
+        {
+          "view": "GEN_LED_VOUCHER_ROW",
+          "role": "the voucher rows (the GL Voucher Rows Analysis)",
+          "inDataDictionary": true
+        },
+        {
+          "view": "MPCCOM_ACCOUNTING",
+          "role": "the manufacturing postings with their voucher and event code",
+          "inDataDictionary": true
+        }
+      ]
+    },
+    {
+      "id": "routing-standard-cost",
+      "status": "blocked",
+      "purpose": "The standard labour cost per unit of each routing operation, and from it per work centre.",
+      "blockedBy": [
+        "Std Lot Size: no column with this prompt was found on the routing views of the data dictionary (ROUTING_HEAD, ROUTING_ALTERNATE, ROUTING_OPERATION). Where is it stored?",
+        "Which routing is meant: the shop order stores the routing revision, but a part can have several alternates and states (the screenshots show the states Buildable and Tentative).",
+        "The labour class rates (LABOR_CLASS_COST) have a start date and an end date: at which date is the rate taken?",
+        "The overhead of a labour class is given per an overhead unit (the screenshot shows Hour). The formula multiplies it by a time, which only holds when the unit is Hour."
+      ],
+      "knownParts": [
+        "ROUTING_OPERATION has OPERATION_NO, WORK_CENTER_NO, SETUP_LABOR_CLASS_NO, LABOR_CLASS_NO, SETUP_CREW_SIZE, CREW_SIZE, LABOR_SETUP_TIME and LABOR_RUN_FACTOR.",
+        "LABOR_CLASS_COST has LABOR_CLASS_RATE and OVERHEAD_FAC per site, labour class, cost set (1 is Inventory Value) and start date.",
+        "The work centre of an operation is ROUTING_OPERATION.WORK_CENTER_NO; the operations of one work centre are added up."
+      ],
+      "entitiesUsed": [
+        {
+          "view": "ROUTING_OPERATION",
+          "role": "the operations with crew sizes, times, run factor, labour classes and work centre",
+          "inDataDictionary": true
+        },
+        {
+          "view": "LABOR_CLASS_COST",
+          "role": "the labour rate and overhead of a labour class per cost set",
+          "inDataDictionary": true
+        },
+        {
+          "view": "ROUTING_HEAD",
+          "role": "the routing of a part",
+          "inDataDictionary": true
+        }
+      ]
+    }
+  ],
+  "columns": [
+    {
+      "label": "Shop Order",
+      "specSource": "Shop Order number of each distinct Shop Order that meets the criteria",
+      "expression": "SHOP_ORD.ORDER_NO (with RELEASE_NO and SEQUENCE_NO)"
+    },
+    {
+      "label": "Status",
+      "specSource": "Status of the Shop Order. This will always be Closed",
+      "expression": "SHOP_ORD.STATE"
+    },
+    {
+      "label": "Completed Qty",
+      "specSource": "The qty completed on each shop order",
+      "expression": "SHOP_ORD.QTY_COMPLETE"
+    },
+    {
+      "label": "Labour Cost (from GL)",
+      "specSource": "Actual labour cost reported for each shop order within the given period",
+      "expression": "sum of GEN_LED_VOUCHER_ROW.AMOUNT of the postings of the shop order x -1 (blocked: gl-labour-postings)"
+    },
+    {
+      "label": "Labour cost per work centre",
+      "dynamic": {
+        "per": "work centre"
+      },
+      "specSource": "A column representing each work centre, showing the proportion of actual labour cost borne by each work centre",
+      "expression": "Labour Cost (from GL) x (standard cost of the work centre / sum of the standard costs of all work centres) (blocked: routing-standard-cost)"
+    },
+    {
+      "label": "Standard Labour Cost per unit",
+      "specSource": "Labour Cost as per standard cost calculation",
+      "expression": "sum of PART_COST_BUCKET.BUCKET_LEVEL_COST of the cost buckets 201 and 221, cost set 1"
+    },
+    {
+      "label": "Standard Labour Cost per unit per Work Centre",
+      "dynamic": {
+        "per": "work centre"
+      },
+      "specSource": "A column representing each work centre, showing the proportion of standard labour cost borne by the work centre",
+      "expression": "sum of the standard labour cost per unit of the operations on the work centre (blocked: routing-standard-cost)"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "work-centre-columns",
+      "title": "How the work centre columns are made",
+      "question": "The report has a pair of columns for every work centre of the company, and the number of work centres is not fixed. A quick report is one SQL statement with a fixed list of columns. Which way should it be built?",
+      "options": [
+        {
+          "label": "Fixed columns for a given list of work centres",
+          "consequence": "The SQL names each work centre as a column. It is simple and fast, but a new work centre needs a change of the report. It needs the list of work centres of the sample company from the consultant."
+        },
+        {
+          "label": "Columns generated when the report runs",
+          "consequence": "A new work centre needs no change, but a quick report cannot change its columns by itself. It needs a way to generate the SQL at run time, and it is not known whether the quick report function supports that."
+        },
+        {
+          "label": "One row per shop order and work centre",
+          "consequence": "No changing columns, and plain SQL works. The consultant can pivot the result in Excel, but it does not match the layout of the specification (one row per shop order)."
+        }
+      ]
+    },
+    {
+      "id": "shop-order-selection",
+      "title": "Which shop orders belong to the week",
+      "question": "The specification lists two open issues: shop orders started in the week but not closed, and shop orders closed in the week but not started in the same week. The text of the functional solution takes the shop orders that have labour postings in the week and are Closed now.",
+      "options": [
+        {
+          "label": "Postings in the week and status Closed (the text of the specification)",
+          "consequence": "An order closed after the week is left out of that week, and an order with postings in several weeks appears in each of them with only the cost of that week."
+        },
+        {
+          "label": "Only orders closed in the week",
+          "consequence": "Needs the close date as an extra condition (SHOP_ORD.CLOSE_DATE), and leaves out the postings of earlier weeks of the same order."
+        },
+        {
+          "label": "Postings in the week, any status",
+          "consequence": "Includes orders that are still open, so the Status column no longer always says Closed, which the specification states."
+        }
+      ]
+    }
+  ],
+  "validation": {
+    "status": "not run",
+    "toConfirmOnTheTestEnvironment": [
+      "The three SQL statements that are written run and return rows for the sample company.",
+      "The status value: the SQL uses the displayed value 'Closed' for SHOP_ORD.STATE.",
+      "The Part Cost SQL counts a cost bucket once per part (structure and routing alternatives, bucket level).",
+      "For a closed shop order the standard labour cost per unit of the part agrees with the actual labour cost per part, as the specification states."
+    ],
+    "offlineChecks": {
+      "version": "IFS Cloud 25R2",
+      "sources": [
+        "work-centres",
+        "closed-shop-orders",
+        "standard-part-cost"
+      ],
+      "checked": 21,
+      "skipped": 0,
+      "unknownViews": [],
+      "unknownColumns": []
+    }
+  },
+  "openQuestions": [
+    "Which field of the GL Voucher Rows Analysis shows the shop order? The data dictionary has no shop order column on the voucher row views.",
+    "Which column holds the transaction code (M42, M58, M124, M125, M132, M133)?",
+    "Which amount is meant by Amount: the signed Amount, or debit minus credit? The specification multiplies the sum by -1.",
+    "Where is the Std Lot Size stored? No column with that name was found on the routing views.",
+    "Which routing is used for the standard cost: the routing revision of the shop order, and which alternate and state? The screenshots show the states Buildable and Tentative.",
+    "Part Cost: the specification adds the Labour Setup cost and the Labour Overhead cost but not the Labor Runtime cost (bucket 200), although the formula has run-time labour terms. Is that intended? And is the Level Cost or the Accumulated Cost meant?",
+    "Labour class rates: at which date is the rate of cost set 1 taken, when the rate has several start dates?",
+    "Labour class overhead: is the overhead always given per Hour? The formula multiplies it by a time.",
+    "What should the work centre columns show when the standard costs of all work centres add up to zero (division by zero)?",
+    "The two open issues of the specification (started but not closed in the week, closed but not started in the week) are still undecided, see the decision on the shop order selection.",
+    "How the work centre columns are made is a decision for the consultant, see the options above.",
+    "Parameters: how are the default dates given (the start of the previous week: Monday or Sunday?), and in which format does a quick report pass a date parameter?",
+    "Should inactive work centres be included in the columns?",
+    "The report mixes totals (actual cost per work centre) and per-unit amounts (standard cost per unit). Is that as intended?"
+  ]
+}

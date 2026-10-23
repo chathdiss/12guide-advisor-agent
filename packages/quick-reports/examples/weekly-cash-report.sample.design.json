@@ -1,0 +1,143 @@
+{
+  "designVersion": 1,
+  "spec": {
+    "title": "Sample Weekly Cash Report",
+    "customer": "Sample Customer",
+    "ticket": "TEST-001",
+    "specRevision": "A1 (sample)",
+    "file": "sample-weekly-cash-report.docx"
+  },
+  "type": "SQL quick report",
+  "report": {
+    "title": "Sample Weekly Cash Report",
+    "category": null,
+    "permissionSets": "To be decided (open in the specification)",
+    "purpose": "Insight into the weekly cash flow: the most recent paid invoice of each customer connected to the selected company."
+  },
+  "parameters": [
+    {
+      "name": "Company",
+      "label": "Company ID",
+      "type": "string",
+      "mandatory": true,
+      "default": null,
+      "usedAs": "'&Company'"
+    }
+  ],
+  "dataSources": [
+    {
+      "id": "latest-paid-invoice-per-customer",
+      "purpose": "One row per customer of the company: the invoice that was paid by the customer's latest customer payment.",
+      "entitiesUsed": [
+        {
+          "view": "IDENTITY_INVOICE_INFO",
+          "role": "the customers connected to the company (the Customer/Invoice tab), and their payment terms",
+          "inDataDictionary": true
+        },
+        {
+          "view": "CUSTOMER_INFO",
+          "role": "customer name",
+          "inDataDictionary": true
+        },
+        {
+          "view": "LEDGER_TRANSACTION_CU_QRY",
+          "role": "customer payment transactions with payment date, payment type and the invoice that was paid (the Customer Analysis window)",
+          "inDataDictionary": true
+        },
+        {
+          "view": "INVOICE_LEDGER_ITEM_CU_QRY",
+          "role": "the invoice of the customer ledger: invoice amount, invoice date, due date, currency, ledger status",
+          "inDataDictionary": true
+        }
+      ],
+      "sql": "SELECT cust.customer_id AS \"Customer ID\",\n       cust.name AS \"Name\",\n       lt.ledger_item_series_id AS \"Invoice Series\",\n       lt.ledger_item_id AS \"Invoice No\",\n       li.ledger_status_type AS \"Status\",\n       li.invoice_amount AS \"Invoice Amount\",\n       li.invoice_date AS \"Invoice Date\",\n       iii.pay_term_id AS \"Payment Terms\",\n       li.due_date AS \"Next/Last Due Date\",\n       li.currency AS \"Currency Code\",\n       lt.pay_date AS \"Payment Date\"\n  FROM identity_invoice_info iii\n  JOIN customer_info cust\n    ON cust.customer_id = iii.identity\n  JOIN (SELECT t.company, t.identity, t.ledger_company, t.ledger_item_series_id, t.ledger_item_id, t.ledger_item_version, t.pay_date,\n               ROW_NUMBER() OVER (PARTITION BY t.company, t.identity ORDER BY t.pay_date DESC, t.payment_id DESC, t.trans_id DESC) AS rn\n          FROM ledger_transaction_cu_qry t\n         WHERE t.company = '&Company'\n           AND t.payment_type_code = 'Customer Payment') lt\n    ON lt.company = iii.company\n   AND lt.identity = iii.identity\n   AND lt.rn = 1\n  LEFT JOIN invoice_ledger_item_cu_qry li\n    ON li.company = lt.ledger_company\n   AND li.identity = lt.identity\n   AND li.series_id = lt.ledger_item_series_id\n   AND li.invoice_no = lt.ledger_item_id\n   AND li.ledger_item_version = lt.ledger_item_version\n WHERE iii.company = '&Company'\n   AND iii.party_type_db = 'CUSTOMER'\n ORDER BY cust.customer_id",
+      "assumptions": [
+        "The latest payment is the one with the latest Payment Date; payment id and transaction id break a tie.",
+        "The customers connected to the company are the rows of IDENTITY_INVOICE_INFO with party type customer.",
+        "The payment is joined to its invoice by company, customer, invoice series, invoice no and version (LEDGER_TRANSACTION_CU_QRY.LEDGER_ITEM_SERIES_ID and LEDGER_ITEM_ID against INVOICE_LEDGER_ITEM_CU_QRY.SERIES_ID and INVOICE_NO). The columns exist in the data dictionary; whether the ledger item id always equals the invoice no is confirmed by the first test run, with INVOICE_ID as the alternative join."
+      ]
+    }
+  ],
+  "columns": [
+    {
+      "label": "Customer ID",
+      "specSource": "Customer ID of each customer",
+      "expression": "CUSTOMER_INFO.CUSTOMER_ID"
+    },
+    {
+      "label": "Name",
+      "specSource": "Customer Name",
+      "expression": "CUSTOMER_INFO.NAME"
+    },
+    {
+      "label": "Invoice Series",
+      "specSource": "Inv/Prepayment Series ID of the most recent paid invoice",
+      "expression": "LEDGER_TRANSACTION_CU_QRY.LEDGER_ITEM_SERIES_ID"
+    },
+    {
+      "label": "Invoice No",
+      "specSource": "Inv/Prepayment No of the most recent paid invoice",
+      "expression": "LEDGER_TRANSACTION_CU_QRY.LEDGER_ITEM_ID"
+    },
+    {
+      "label": "Status",
+      "specSource": "Get the status of the invoice from the customer invoice",
+      "expression": "INVOICE_LEDGER_ITEM_CU_QRY.LEDGER_STATUS_TYPE"
+    },
+    {
+      "label": "Invoice Amount",
+      "specSource": "Get the Inv/Prepayment Amount from the ledger item",
+      "expression": "INVOICE_LEDGER_ITEM_CU_QRY.INVOICE_AMOUNT"
+    },
+    {
+      "label": "Invoice Date",
+      "specSource": "Get the Inv/Prepayment Date from the ledger item",
+      "expression": "INVOICE_LEDGER_ITEM_CU_QRY.INVOICE_DATE"
+    },
+    {
+      "label": "Payment Terms",
+      "specSource": "Get the Payment terms from Customer Analysis",
+      "expression": "IDENTITY_INVOICE_INFO.PAY_TERM_ID"
+    },
+    {
+      "label": "Next/Last Due Date",
+      "specSource": "Get the Next/Last Due Date from the ledger item",
+      "expression": "INVOICE_LEDGER_ITEM_CU_QRY.DUE_DATE"
+    },
+    {
+      "label": "Currency Code",
+      "specSource": "Get the currency from the ledger item",
+      "expression": "INVOICE_LEDGER_ITEM_CU_QRY.CURRENCY"
+    },
+    {
+      "label": "Payment Date",
+      "specSource": "Get the payment date from the cash transaction",
+      "expression": "LEDGER_TRANSACTION_CU_QRY.PAY_DATE"
+    }
+  ],
+  "validation": {
+    "status": "not run",
+    "toConfirmOnTheTestEnvironment": [
+      "The SQL runs and returns rows for a company that has customer payments.",
+      "The value of Payment Type: the SQL uses the displayed value 'Customer Payment'. If the test environment uses another language, or the column holds a code, use PAYMENT_TYPE_CODE_DB with its database value.",
+      "Each customer appears once, and the invoice shown is the one of the latest payment.",
+      "The join of the payment to its invoice returns one invoice per payment (series and invoice no; the alternative is INVOICE_ID), and no invoice twice because of ledger item versions.",
+      "The run time for the biggest company."
+    ],
+    "offlineChecks": {
+      "version": "IFS Cloud 25R2",
+      "checked": 26,
+      "skipped": 8,
+      "unknownViews": [],
+      "unknownColumns": []
+    }
+  },
+  "openQuestions": [
+    "Customers that have no customer payment at all are left out of the report. Should they appear with empty invoice columns?",
+    "Status: the design uses the ledger status of the invoice (Ledger Status). If the status of the customer invoice itself is meant (the state of the invoice), the source is another view.",
+    "Payments that were rolled back are not excluded, because the specification does not say. Should they be?",
+    "Next/Last Due Date: the design shows the due date of the ledger item. Is a next due date of another open invoice meant?",
+    "The permission sets and the report category are still to be decided.",
+    "The specification says the data is presented in a format that is shown as a picture; the columns were taken from the Report Layout table."
+  ]
+}

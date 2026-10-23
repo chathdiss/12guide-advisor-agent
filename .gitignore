@@ -32,3 +32,6 @@ Thumbs.db
 Export-IfsProjectionDocs*.ps1
 Projections-Export-Script-Files*
 ifs-projection-export-*/
+
+# Real customer quick report designs and their review pages stay on this PC (they hold the customer name, tickets and authors of the specifications)
+packages/quick-reports/designs/

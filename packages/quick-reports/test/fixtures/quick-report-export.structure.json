@@ -1,0 +1,29 @@
+{
+  "source": "a real IFS 25R2 export of one SQL quick report (tags and data types only)",
+  "tags": [
+    "0:QUICK_REPORT_LIST",
+    "1:QUICK_REPORT",
+    "2:QUICK_REPORT_ID:Number",
+    "2:DESCRIPTION:Text",
+    "2:SQL_EXPRESSION:Text",
+    "2:COMMENTS:Text",
+    "2:CATEGORY_ID:Number",
+    "2:CATEGORY_DESCRIPTION:Text",
+    "2:DOMAIN_ID:Number",
+    "2:DOMAIN_DESCRIPTION:Text",
+    "2:FILE_NAME:Text",
+    "2:QR_TYPE:Enum",
+    "2:PO_ID:Text",
+    "2:QUERY:Text",
+    "2:ROW_TYPE:Text",
+    "2:APP_CONFIG_PACKAGE:Text",
+    "2:QUICK_REPORT_CATEGORY:Aggregate",
+    "3:REPORT_CATEGORY",
+    "4:CATEGORY_ID:Number",
+    "4:DESCRIPTION:Text",
+    "2:QUICK_REPORT_DOMAIN:Aggregate",
+    "3:REPORT_DOMAIN",
+    "4:DOMAIN_ID:Number",
+    "4:DESCRIPTION:Text"
+  ]
+}

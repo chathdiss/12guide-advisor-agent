@@ -1,0 +1,16 @@
+{
+  "name": "quick-reports",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Quick report designs for the Advisor: a structured design of a quick report (parameters, SQL, columns) made from a functional specification, and the checks that run before the SQL is tried on an IFS test environment.",
+  "scripts": {
+    "test": "node --test",
+    "check": "node src/cli/check-design.js",
+    "check:dictionary": "node --env-file=../db/.env src/cli/check-dictionary.js",
+    "review": "node src/cli/review.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.0"
+  }
+}
