@@ -3,8 +3,16 @@ import { createRetriever, searchBoth } from "./knowledge.js";
 import { createTools } from "./tools.js";
 import { createMemory } from "./memory.js";
 import { createRewriter } from "./rewrite.js";
+import { createUsageReader } from "./n8n-usage.js";
+import { createQuickReportActions } from "./quickreport-actions.js";
+import { createIfsRunner } from "./ifs-runner.js";
+import { createExporter } from "./qr-export.js";
+import { installProcessLog } from "./process-log.js";
 import { findApiCards } from "../../../packages/knowledge/src/find-api.js";
 import { findByName, findByTitle, loadDocumentTexts, searchKnowledge } from "../../../packages/knowledge/src/search.js";
+
+// what stops or surprises the backend leaves a line in the log (process-log.js)
+installProcessLog();
 
 const port = Number(process.env.PORT) || 4000; // Render sets PORT itself
 
@@ -21,6 +29,8 @@ const config = {
   corsOrigins: list(process.env.CORS_ORIGINS),
   // this backend's own public address: n8n posts finished answers to it. Render sets RENDER_EXTERNAL_URL itself.
   publicUrl: process.env.PUBLIC_API_URL || process.env.RENDER_EXTERNAL_URL || "",
+  // token counts from the executions of n8n (see n8n-usage.js): only with the address of n8n and an API key that may read executions
+  usageReader: createUsageReader({ baseUrl: process.env.N8N_API_URL, apiKey: process.env.N8N_API_KEY }),
 };
 
 function list(value, fallback = []) {
@@ -42,7 +52,7 @@ if (process.env.DATABASE_URL) {
   const db = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
     max: 5,
-    connectionTimeoutMillis: 3000,
+    connectionTimeoutMillis: 10_000,
     // a question made of very common words ("customer order fields") needs 10 to 20 seconds in the biggest sources; the limit stops a
     // search that never ends, it must not cut one that is only slow
     statement_timeout: Number(process.env.KNOWLEDGE_STATEMENT_TIMEOUT_MS) || 60000,
@@ -63,6 +73,23 @@ if (process.env.DATABASE_URL) {
     findApi: findApiCards,
   });
   config.maxToolCalls = Number(process.env.AGENT_MAX_TOOL_CALLS) || 6;
+  // what happens after a quick report design was approved: Option A (IFS through Playwright, off unless IFS_AUTOMATION=on) and Option B (export file)
+  config.quickReports = createQuickReportActions({
+    check: (designJson) => config.tools.checkQuickReport(designJson),
+    runner: createIfsRunner({
+      enabled: String(process.env.IFS_AUTOMATION ?? "").toLowerCase() === "on",
+      // a rehearsal fills in the New Report dialog and cancels it: only IFS_REHEARSAL=off creates reports
+      rehearsal: String(process.env.IFS_REHEARSAL ?? "").toLowerCase() !== "off",
+      // IFS_HEADED=on: a real run is done in a visible browser too (a rehearsal always is)
+      headed: String(process.env.IFS_HEADED ?? "").toLowerCase() === "on",
+      // IFS_TEST_EXECUTE=on: a test run of a report presses Execute (runs its SQL in IFS). Without it a test run is a rehearsal that does not.
+      executeTests: String(process.env.IFS_TEST_EXECUTE ?? "").toLowerCase() === "on",
+      baseUrl: process.env.IFS_BASE_URL,
+      storageState: process.env.IFS_STORAGE_STATE,
+    }),
+    exporter: createExporter(),
+    log: (fields) => console.log(JSON.stringify({ time: new Date().toISOString(), route: "/api/quick-report", ...fields })),
+  });
   config.retrieve = createRetriever({ db, search: searchKnowledge, rewrite, loadFull: loadDocumentTexts, findTitles: findByTitle, findNames: findByName, findApi: findApiCards });
 } else {
   console.warn("Warning: DATABASE_URL is not set, so answers are not grounded in the approved sources.");

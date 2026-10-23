@@ -7,8 +7,9 @@
 // cites it as [n] and the backend can check the marker. The answer of a tool is text in the same <source> format as the
 // passages that come with the question.
 import { buildPassages } from "./knowledge.js";
+import { reviewDesign } from "../../../packages/quick-reports/src/review-design.js";
 import { entitySummary, parseEntityModel } from "../../../packages/knowledge/src/entity.js";
-import { columnHitsText, luSummary, referenceTarget } from "../../../packages/knowledge/src/dictionary-summary.js";
+import { columnHitsText, luSummary, referenceTarget, viewSummary } from "../../../packages/knowledge/src/dictionary-summary.js";
 
 const DICTIONARY_ORIGIN = "IFS data dictionary";
 // words that say nothing about which column is meant
@@ -45,6 +46,12 @@ export function createTools({ db, search, searchAll, loadFull, findNames = null,
     return buildPassages(found, full, { budget: RESULT_CHARS });
   };
 
+  // the columns of a view of the IFS data dictionary (upper case), or null when the dictionary has no such view; it throws when it is not loaded
+  const dictionaryLookup = async (view) => {
+    const { rows } = await db.query("SELECT DISTINCT column_name FROM dictionary_column WHERE view_name = $1", [String(view).toUpperCase()]);
+    return rows.length > 0 ? new Set(rows.map((r) => String(r.column_name).toUpperCase())) : null;
+  };
+
   // --- the IFS data dictionary (packages/db/schema/004_dictionary.sql), when it has been loaded ---
 
   // The logical unit with this name (CustomerOrderLine), base view (CUSTOMER_ORDER_LINE) or prompt (Customer Order Line).
@@ -63,6 +70,44 @@ export function createTools({ db, search, searchAll, loadFull, findNames = null,
       return null;
     } catch (err) {
       if (err?.code === "42P01") return null; // undefined_table
+      throw err;
+    }
+  };
+
+  // A view of the dictionary by its name, also when it is not the base view of an entity (INVOICE_LEDGER_ITEM_CU_QRY): the columns of a query
+  // view are what a quick report or a Lobby data source reads. null when there is none, or when the dictionary is not loaded.
+  const describeDictionaryView = async (letters) => {
+    try {
+      const { rows } = await db.query(
+        `SELECT version, view_name, lu_name FROM dictionary_column WHERE replace(lower(view_name), '_', '') = $1 ORDER BY version DESC LIMIT 1`,
+        [letters],
+      );
+      const found = rows[0];
+      if (!found) return null;
+      const columns = (
+        await db.query(
+          `SELECT column_name, datatype, prompt, type_flag, required_flag, column_reference, enumeration, row_level_security
+             FROM dictionary_column WHERE version = $1 AND view_name = $2 ORDER BY column_index`,
+          [found.version, found.view_name],
+        )
+      ).rows;
+      return {
+        passages: [
+          {
+            title: `${found.view_name} (data dictionary view)`,
+            path: `dictionary/${found.version}/view/${found.view_name}`,
+            origin: DICTIONARY_ORIGIN,
+            url: "",
+            version: found.version,
+            startLine: 1,
+            endLine: Math.max(1, columns.length),
+            content: viewSummary({ view: found.view_name, luName: found.lu_name, version: found.version, columns }),
+          },
+        ],
+        note: "",
+      };
+    } catch (err) {
+      if (err?.code === "42P01") return null;
       throw err;
     }
   };
@@ -198,6 +243,20 @@ export function createTools({ db, search, searchAll, loadFull, findNames = null,
       return shape(await findNames(db, model ? `${text} model` : text, { limit: 6 }));
     },
 
+    // Step 4 of the quick report workflow (packages/quick-reports): the design that the agent wrote is checked and turned into the review
+    // page for the consultant. The SQL is NOT run: only its shape and its views and columns in the IFS data dictionary are checked.
+    // The answer is plain text for the agent (it is not a source: nothing in it is cited).
+    async reviewQuickReport({ designJson }) {
+      const r = await reviewDesign(designJson, dictionaryLookup);
+      // the page and the design go to the backend, not to the agent: they are put into the answer exactly as they are (quickreport.js)
+      return { text: r.text, ...(r.reviewPage ? { artifacts: { reviewPage: r.reviewPage, designJson: r.designJson, ok: r.ok } } : {}) };
+    },
+
+    // The same review, as a whole (for the backend, not for the agent): the next steps of a design need its errors, its design and its fingerprint
+    async checkQuickReport(designJson) {
+      return reviewDesign(designJson, dictionaryLookup);
+    },
+
     // What an entity is: its columns, key, parent (header) entity and references. This is how the agent checks that a column
     // exists, and whether an entity is a header or a line, before it puts them in a query. The IFS data dictionary is used when
     // it is loaded (exact view, table and package names, all columns of the view); otherwise the .entity model file.
@@ -206,6 +265,8 @@ export function createTools({ db, search, searchAll, loadFull, findNames = null,
       if (letters.length < 3) return { passages: [], note: "Give the name of an entity, for example 'customer order' or CustomerOrderLine." };
       const lu = await findLogicalUnit(letters);
       if (lu) return describeFromDictionary(lu);
+      const view = await describeDictionaryView(letters);
+      if (view) return view;
       const { rows: files } = await db.query(
         `SELECT doc_key, title, version, component FROM knowledge_documents
           WHERE origin = 'IFS source code' AND lower(title) = $1 ORDER BY version DESC LIMIT 3`,

@@ -44,7 +44,8 @@ export function parseRewrite(text) {
 // Returns an async function (question) => { language, keywords } | null. It never throws:
 // when the rewrite fails the caller searches with the words of the question instead.
 export function createRewriter({ apiKey, model = DEFAULT_MODEL, timeoutMs = DEFAULT_TIMEOUT_MS, fetchImpl = fetch }) {
-  return async (question) => {
+  // `usage` (optional): the token counts that the provider reports for this call are added to it
+  return async (question, usage = null) => {
     try {
       const res = await fetchImpl(API_URL, {
         method: "POST",
@@ -59,6 +60,11 @@ export function createRewriter({ apiKey, model = DEFAULT_MODEL, timeoutMs = DEFA
       });
       if (!res.ok) throw new Error(`Anthropic API answered ${res.status}`);
       const data = await res.json();
+      if (usage && data?.usage) {
+        usage.inputTokens += Number(data.usage.input_tokens) || 0;
+        usage.outputTokens += Number(data.usage.output_tokens) || 0;
+        usage.calls += 1;
+      }
       const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text).join("");
       return parseRewrite(text);
     } catch (err) {

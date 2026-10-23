@@ -355,6 +355,31 @@ describe("the data dictionary tools", () => {
     col("STATE", { datatype: "STRING(20)", prompt: "State" }),
   ];
 
+  it("describes a view of the dictionary that is not the base view of an entity, by its exact name, with all its columns", async () => {
+    const viewColumns = [col("COMPANY", { datatype: "STRING(20)", prompt: "Company" }), col("INVOICE_NO", { datatype: "STRING(50)", prompt: "Invoice No" }), col("LEDGER_STATUS_TYPE", { prompt: "Ledger Status" }), col("LEDGER_STATUS_TYPE_DB", { prompt: "Ledger Status" }), col("OBJID", { datatype: "" })];
+    const base = dictDb();
+    const db = {
+      query: async (sql, params) => {
+        if (sql.includes("replace(lower(view_name)")) return { rows: params[0] === "invoiceledgeritemcuqry" ? [{ version: V, view_name: "INVOICE_LEDGER_ITEM_CU_QRY", lu_name: "InvoiceLedgerItem" }] : [] };
+        if (sql.includes("SELECT column_name, datatype") && params[1] === "INVOICE_LEDGER_ITEM_CU_QRY") return { rows: viewColumns };
+        return base.query(sql, params);
+      },
+    };
+    const { passages, note } = await tools(db).describeEntity({ name: "INVOICE_LEDGER_ITEM_CU_QRY" });
+    assert.equal(note, "");
+    const [p] = passages;
+    assert.equal(p.title, "INVOICE_LEDGER_ITEM_CU_QRY (data dictionary view)");
+    assert.equal(p.path, `dictionary/${V}/view/INVOICE_LEDGER_ITEM_CU_QRY`);
+    assert.match(p.content, /^View INVOICE_LEDGER_ITEM_CU_QRY of the logical unit InvoiceLedgerItem \(a view that is not the base view of an entity\)/);
+    assert.match(p.content, /All 5 columns of the view/);
+    assert.match(p.content, /COMPANY \(string\(20\)\), INVOICE_NO \(string\(50\)\), LEDGER_STATUS_TYPE \(string\(20\), prompt "Ledger Status"\) \+DB/);
+    assert.ok(!p.content.includes("LEDGER_STATUS_TYPE_DB (string"), "the twin is folded into its column");
+    assert.match(p.content, /System columns that IFS adds: OBJID\./);
+    // a name that is no view of the dictionary still gets the answer it got before
+    const none = await tools(db).describeEntity({ name: "no such thing" });
+    assert.match(none.note, /No entity model file was found/);
+  });
+
   it("describes a line entity from the dictionary: its view, table, package, all columns and its parent (header) entity", async () => {
     const db = dictDb({ units: { customerorderline: lu() }, columns: { CUSTOMER_ORDER_LINE: lineColumns } });
     let filesRead = 0;
@@ -371,7 +396,7 @@ describe("the data dictionary tools", () => {
     assert.match(p.content, /Key columns: ORDER_NO, LINE_NO/);
     assert.match(p.content, /PLANNED_DELIVERY_DATE \(datetime, prompt "Planned Delivery Date"\)|PLANNED_DELIVERY_DATE \(datetime\)/);
     assert.match(p.content, /CONTRACT \(string\(20\), prompt "Site", mandatory\)/);
-    assert.match(p.content, /OBJSTATE \(system column\)/);
+    assert.match(p.content, /System columns that IFS adds: OBJSTATE\./);
     assert.match(p.content, /Joins \(column -> logical unit it points to\): CONTRACT -> Site/);
     assert.match(p.content, /Row-level security: CONTRACT \(site\)/);
     assert.match(p.content, /Other views of this logical unit: CUSTOMER_ORDER_LINE_LOV, CUSTOMER_ORDER_LINE_PUB/);
