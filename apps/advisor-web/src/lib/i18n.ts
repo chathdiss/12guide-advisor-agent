@@ -94,6 +94,83 @@ export type Strings = {
   enterHint: string;
   exampleLabels: string[];
   hintFiles: string;
+  // the two tabs: Advisor Chat and Quick Reports
+  tabsLabel: string;
+  tabAdvisor: string;
+  tabQuickReports: string;
+  quickReportTitle: string;
+  quickReportSub: string;
+  quickReportExamples: string[];
+  quickReportLabels: string[];
+  quickReportHint: string;
+  quickReportPlaceholder: string;
+  newQuickReport: string;
+  // after a design was reviewed: approve it, then choose what happens next
+  nextChecking: string;
+  nextCheckFailed: string;
+  nextRunLostA: string;
+  nextRunLostB: string;
+  // the test run of a report that exists in IFS
+  nextTestTitle: string;
+  nextTestIntro: string;
+  nextTestImportFirst: string;
+  nextTestRehearsalMode: string;
+  nextTestReportId: string;
+  nextTestReportIdHint: string;
+  nextTestParameters: string;
+  nextTestProblem: (code: string, name?: string) => string;
+  nextTestEmpty: (name: string) => string;
+  nextTestStart: string;
+  nextTestConfirmTitleRun: string;
+  nextTestConfirmBodyRun: (target: string) => string;
+  nextTestConfirmTitleRehearsal: string;
+  nextTestConfirmBodyRehearsal: (target: string) => string;
+  nextTestPrivacy: string;
+  nextTestYesRun: string;
+  nextTestYesRehearsal: string;
+  nextTestRunning: string;
+  nextTestResultTitle: string;
+  nextTestColumnsMatch: string;
+  nextTestColumnsDiffer: string;
+  nextTestRows: (n: number, more: boolean) => string;
+  nextTestSeconds: (s: number) => string;
+  nextTestScreenshot: string;
+  nextTestAgain: string;
+  nextTestRealEnvironment: string;
+  nextTestLost: string;
+  nextRetry: string;
+  nextBlockedTitle: string;
+  nextReadyTitle: string;
+  nextReadySub: string;
+  nextOpenQuestions: string;
+  nextValidation: (checked: number, unknownViews: number, unknownColumns: number) => string;
+  nextApprove: string;
+  nextOptionsTitle: string;
+  nextNothingYet: string;
+  nextOptionATitle: string;
+  nextOptionADesc: string;
+  nextOptionBTitle: string;
+  nextOptionBDesc: string;
+  nextChooseA: string;
+  nextChooseB: string;
+  nextNeeds: string;
+  nextConfirmTitle: string;
+  nextConfirmBody: (target: string) => string;
+  nextConfirmYes: string;
+  nextConfirmTitleRehearsal: string;
+  nextConfirmBodyRehearsal: (target: string) => string;
+  nextConfirmYesRehearsal: string;
+  nextCancel: string;
+  nextRunning: string;
+  nextResultTitle: string;
+  nextBack: string;
+  nextTouched: (what: string) => string;
+  nextStepOk: string;
+  nextStepFailed: string;
+  nextStepNotDone: string;
+  nextDownload: string;
+  nextHowToImport: string;
+  nextWarnings: string;
   themeLabel: string;
   themeLight: string;
   themeDark: string;
@@ -175,6 +252,88 @@ export const STRINGS: Record<Lang, Strings> = {
     enterHint: "Enter to send, Shift+Enter for a new line",
     exampleLabels: ["Configuration", "Concepts", "Releases"],
     hintFiles: "Paste or drop screenshots and files into the message box.",
+    tabsLabel: "Workspace",
+    tabAdvisor: "Advisor Chat",
+    tabQuickReports: "Quick Reports",
+    quickReportTitle: "Design an IFS quick report",
+    quickReportSub: "Describe the report or attach its specification. You get a design with a review page to approve or change.",
+    quickReportExamples: [
+      "Create a quick report 'Open Customer Invoices' for one company, with the parameter Due Before and the columns Invoice No, Customer, Due Date and Amount.",
+      "Create a quick report that lists the open customer orders of a site with order number, customer and wanted delivery date, with the parameters Site and Delivery Before.",
+      "Create a quick report that lists the customer invoices of a company with their payment terms and due dates.",
+    ],
+    quickReportLabels: ["Invoices", "Customer orders", "Payment terms"],
+    quickReportHint: "Attach the Word or PDF specification of the report to the message. The SQL is checked against the IFS data dictionary only; it is not run on an IFS environment.",
+    quickReportPlaceholder: "Describe the quick report…",
+    newQuickReport: "New quick report",
+    nextChecking: "Checking whether the design is ready for the next step…",
+    nextCheckFailed: "The design could not be checked right now.",
+    nextRunLostA: "The answer of the backend was lost, so it is not known whether the quick report was created. Check the Quick Reports list in IFS before you try again, so that it is not created twice.",
+    nextRunLostB: "The answer of the backend was lost. This option never opens or changes IFS: you can try again.",
+    nextRetry: "Check again",
+    nextBlockedTitle: "Not ready for the next step yet",
+    nextReadyTitle: "The design is ready for your approval",
+    nextReadySub: "Approve it to choose what happens next. Nothing is created or exported until you choose.",
+    nextOpenQuestions: "Still open (you can approve anyway, or ask for a change first)",
+    nextValidation: (c, v, col) => `Checked against the IFS data dictionary only: ${c} column reference(s), ${v} unknown view(s), ${col} unknown column(s). The SQL has not been run on any IFS environment.`,
+    nextApprove: "Approve design",
+    nextOptionsTitle: "How do you want to continue?",
+    nextNothingYet: "Nothing happens until you choose one of these.",
+    nextOptionATitle: "Option A: create it directly in IFS",
+    nextOptionADesc: "Opens the IFS environment with Playwright and fills in the New Report dialog with your design. While the rehearsal is on, it cancels the dialog and saves nothing; otherwise it saves the report. The SQL is not run. You confirm once more first.",
+    nextOptionBTitle: "Option B: generate an export file",
+    nextOptionBDesc: "Generates the export file of the quick report for you to import into IFS yourself. IFS is not opened or changed.",
+    nextChooseA: "Choose Option A",
+    nextChooseB: "Choose Option B",
+    nextNeeds: "Not available yet. Needs:",
+    nextConfirmTitle: "Create the quick report in IFS?",
+    nextConfirmBody: (target) => `This opens ${target} with your saved session and creates the quick report there. It changes the IFS environment.`,
+    nextConfirmYes: "Yes, create it in IFS",
+    nextConfirmTitleRehearsal: "Rehearse in IFS? Nothing will be saved",
+    nextConfirmBodyRehearsal: (target) => `This opens ${target} with your saved session in a visible browser, fills in the New Report dialog with your design, and cancels it. Nothing is saved. It shows whether the fields are found.`,
+    nextConfirmYesRehearsal: "Yes, rehearse (nothing is saved)",
+    nextCancel: "Cancel",
+    nextRunning: "Running…",
+    nextResultTitle: "Result",
+    nextBack: "Back to the options",
+    nextTouched: (what) => `IFS: ${what}`,
+    nextStepOk: "done",
+    nextStepFailed: "failed",
+    nextStepNotDone: "not done",
+    nextTestTitle: "Test run in IFS",
+    nextTestIntro: "IFS runs the SQL of the report (a read-only SELECT) with the values you type, and this page shows what IFS returns: the columns, the first rows, how long it took, and a screenshot. The report has to exist in IFS.",
+    nextTestImportFirst: "Import the file in IFS first (Option B): the test run opens the report that is in IFS.",
+    nextTestRehearsalMode: "Rehearsal: the report is opened and its parameters are filled in, but Execute is not pressed, so the SQL is not run (IFS_TEST_EXECUTE is off).",
+    nextTestReportId: "Report id",
+    nextTestReportIdHint: "The number in the projection name of the report in IFS (QuickReport<id>).",
+    nextTestParameters: "Values of the parameters",
+    nextTestProblem: (code, name) =>
+      code === "id" ? "The report id must be a number."
+      : code === "long" ? `The value of ${name} is too long (at most 100 characters).`
+      : code === "unsafe" ? `The value of ${name} may not contain quotes, semicolons, ampersands or comment marks.`
+      : `The parameter ${name} is mandatory: it needs a value.`,
+    nextTestEmpty: (name) => `${name} is empty: the report may return all rows.`,
+    nextTestStart: "Test run in IFS",
+    nextTestConfirmTitleRun: "Run the SQL in IFS?",
+    nextTestConfirmBodyRun: (target) => `This opens ${target} with your saved session and runs the report with these values: IFS executes its SELECT. Nothing in IFS is changed.`,
+    nextTestConfirmTitleRehearsal: "Rehearse the test run? The SQL will not be run",
+    nextTestConfirmBodyRehearsal: (target) => `This opens ${target} in a visible browser, finds the parameters of the report and fills them in. It does not press Execute.`,
+    nextTestPrivacy: "The rows and the screenshot can contain customer data. They are shown on this page only: they are not saved, not logged, not part of the chat, and not sent to the AI model.",
+    nextTestYesRun: "Yes, run it",
+    nextTestYesRehearsal: "Yes, rehearse (the SQL is not run)",
+    nextTestRunning: "Running in IFS…",
+    nextTestResultTitle: "Test run",
+    nextTestColumnsMatch: "The columns are those of the design",
+    nextTestColumnsDiffer: "The columns are not those of the design",
+    nextTestRows: (n, more) => `${n}${more ? "+" : ""} row(s) read`,
+    nextTestSeconds: (s) => `${s} s`,
+    nextTestScreenshot: "Screenshot of the result in IFS",
+    nextTestAgain: "Test again",
+    nextTestRealEnvironment: "Real environment",
+    nextTestLost: "The answer of the backend was lost, so it is not known whether the report was run in IFS. Look at the report in IFS before you try again.",
+    nextDownload: "Download the file",
+    nextHowToImport: "How to import it in IFS",
+    nextWarnings: "Please note",
     themeLabel: "Theme",
     themeLight: "Light",
     themeDark: "Dark",
@@ -298,6 +457,88 @@ export const STRINGS: Record<Lang, Strings> = {
     enterHint: "Enter om te verzenden, Shift+Enter voor een nieuwe regel",
     exampleLabels: ["Configuratie", "Begrippen", "Releases"],
     hintFiles: "Plak of sleep screenshots en bestanden in het berichtveld.",
+    tabsLabel: "Werkruimte",
+    tabAdvisor: "Advisor Chat",
+    tabQuickReports: "Quick Reports",
+    quickReportTitle: "Ontwerp een IFS quick report",
+    quickReportSub: "Beschrijf het rapport of voeg de specificatie toe. U krijgt een ontwerp met een reviewpagina om goed te keuren of te wijzigen.",
+    quickReportExamples: [
+      "Maak een quick report 'Open Customer Invoices' voor één bedrijf, met de parameter Due Before en de kolommen Invoice No, Customer, Due Date en Amount.",
+      "Maak een quick report dat de open klantorders van een site toont met ordernummer, klant en gewenste leverdatum, met de parameters Site en Delivery Before.",
+      "Maak een quick report dat de klantfacturen van een bedrijf toont met betalingsvoorwaarden en vervaldatums.",
+    ],
+    quickReportLabels: ["Facturen", "Klantorders", "Betalingsvoorwaarden"],
+    quickReportHint: "Voeg de Word- of PDF-specificatie van het rapport toe aan het bericht. De SQL wordt alleen gecontroleerd tegen het IFS-datawoordenboek; ze wordt niet op een IFS-omgeving uitgevoerd.",
+    quickReportPlaceholder: "Beschrijf het quick report…",
+    newQuickReport: "Nieuw quick report",
+    nextChecking: "Controleren of het ontwerp klaar is voor de volgende stap…",
+    nextCheckFailed: "Het ontwerp kon nu niet worden gecontroleerd.",
+    nextRunLostA: "Het antwoord van de backend is verloren gegaan, dus het is niet bekend of het quick report is aangemaakt. Controleer de lijst met quick reports in IFS voordat u het opnieuw probeert, zodat het niet twee keer wordt aangemaakt.",
+    nextRunLostB: "Het antwoord van de backend is verloren gegaan. Deze optie opent of wijzigt IFS nooit: u kunt het opnieuw proberen.",
+    nextRetry: "Opnieuw controleren",
+    nextBlockedTitle: "Nog niet klaar voor de volgende stap",
+    nextReadyTitle: "Het ontwerp is klaar voor uw goedkeuring",
+    nextReadySub: "Keur het goed om te kiezen wat er daarna gebeurt. Er wordt niets aangemaakt of geëxporteerd voordat u kiest.",
+    nextOpenQuestions: "Nog open (u kunt toch goedkeuren, of eerst een wijziging vragen)",
+    nextValidation: (c, v, col) => `Alleen gecontroleerd tegen het IFS-datawoordenboek: ${c} kolomverwijzing(en), ${v} onbekende view(s), ${col} onbekende kolom(men). De SQL is niet uitgevoerd op een IFS-omgeving.`,
+    nextApprove: "Ontwerp goedkeuren",
+    nextOptionsTitle: "Hoe wilt u verder?",
+    nextNothingYet: "Er gebeurt niets totdat u een van deze opties kiest.",
+    nextOptionATitle: "Optie A: direct in IFS aanmaken",
+    nextOptionADesc: "Opent de IFS-omgeving met Playwright en vult het dialoogvenster Nieuw rapport in met uw ontwerp. Zolang de repetitie aanstaat, annuleert het het venster en slaat het niets op; anders slaat het het rapport op. De SQL wordt niet uitgevoerd. U bevestigt eerst nog een keer.",
+    nextOptionBTitle: "Optie B: exportbestand maken",
+    nextOptionBDesc: "Maakt het exportbestand van het quick report dat u zelf in IFS importeert. IFS wordt niet geopend of gewijzigd.",
+    nextChooseA: "Kies optie A",
+    nextChooseB: "Kies optie B",
+    nextNeeds: "Nog niet beschikbaar. Nodig:",
+    nextConfirmTitle: "Het quick report in IFS aanmaken?",
+    nextConfirmBody: (target) => `Dit opent ${target} met uw opgeslagen sessie en maakt daar het quick report aan. Het wijzigt de IFS-omgeving.`,
+    nextConfirmYes: "Ja, aanmaken in IFS",
+    nextConfirmTitleRehearsal: "Repeteren in IFS? Er wordt niets opgeslagen",
+    nextConfirmBodyRehearsal: (target) => `Dit opent ${target} met uw opgeslagen sessie in een zichtbare browser, vult het dialoogvenster Nieuw rapport in met uw ontwerp en annuleert het. Er wordt niets opgeslagen. Zo ziet u of de velden gevonden worden.`,
+    nextConfirmYesRehearsal: "Ja, repeteren (niets wordt opgeslagen)",
+    nextCancel: "Annuleren",
+    nextRunning: "Bezig…",
+    nextResultTitle: "Resultaat",
+    nextBack: "Terug naar de opties",
+    nextTouched: (what) => `IFS: ${what}`,
+    nextStepOk: "gelukt",
+    nextStepFailed: "mislukt",
+    nextStepNotDone: "niet gedaan",
+    nextTestTitle: "Testrun in IFS",
+    nextTestIntro: "IFS voert de SQL van het rapport uit (een alleen-lezen SELECT) met de waarden die u typt, en deze pagina toont wat IFS teruggeeft: de kolommen, de eerste rijen, hoe lang het duurde en een screenshot. Het rapport moet in IFS bestaan.",
+    nextTestImportFirst: "Importeer eerst het bestand in IFS (optie B): de testrun opent het rapport dat in IFS staat.",
+    nextTestRehearsalMode: "Repetitie: het rapport wordt geopend en de parameters worden ingevuld, maar Execute wordt niet ingedrukt, dus de SQL wordt niet uitgevoerd (IFS_TEST_EXECUTE staat uit).",
+    nextTestReportId: "Rapport-id",
+    nextTestReportIdHint: "Het nummer in de projectienaam van het rapport in IFS (QuickReport<id>).",
+    nextTestParameters: "Waarden van de parameters",
+    nextTestProblem: (code, name) =>
+      code === "id" ? "Het rapport-id moet een getal zijn."
+      : code === "long" ? `De waarde van ${name} is te lang (maximaal 100 tekens).`
+      : code === "unsafe" ? `De waarde van ${name} mag geen aanhalingstekens, puntkomma's, ampersands of commentaartekens bevatten.`
+      : `De parameter ${name} is verplicht: er is een waarde nodig.`,
+    nextTestEmpty: (name) => `${name} is leeg: het rapport kan alle rijen teruggeven.`,
+    nextTestStart: "Testrun in IFS",
+    nextTestConfirmTitleRun: "De SQL uitvoeren in IFS?",
+    nextTestConfirmBodyRun: (target) => `Dit opent ${target} met uw opgeslagen sessie en voert het rapport uit met deze waarden: IFS voert de SELECT uit. Er wordt niets in IFS gewijzigd.`,
+    nextTestConfirmTitleRehearsal: "De testrun repeteren? De SQL wordt niet uitgevoerd",
+    nextTestConfirmBodyRehearsal: (target) => `Dit opent ${target} in een zichtbare browser, zoekt de parameters van het rapport en vult ze in. Execute wordt niet ingedrukt.`,
+    nextTestPrivacy: "De rijen en de screenshot kunnen klantgegevens bevatten. Ze worden alleen op deze pagina getoond: ze worden niet opgeslagen, niet gelogd, maken geen deel uit van de chat en gaan niet naar het AI-model.",
+    nextTestYesRun: "Ja, uitvoeren",
+    nextTestYesRehearsal: "Ja, repeteren (de SQL wordt niet uitgevoerd)",
+    nextTestRunning: "Bezig in IFS…",
+    nextTestResultTitle: "Testrun",
+    nextTestColumnsMatch: "De kolommen zijn die van het ontwerp",
+    nextTestColumnsDiffer: "De kolommen zijn niet die van het ontwerp",
+    nextTestRows: (n, more) => `${n}${more ? "+" : ""} rij(en) gelezen`,
+    nextTestSeconds: (s) => `${s} s`,
+    nextTestScreenshot: "Screenshot van het resultaat in IFS",
+    nextTestAgain: "Opnieuw testen",
+    nextTestRealEnvironment: "Echte omgeving",
+    nextTestLost: "Het antwoord van de backend is verloren gegaan, dus het is niet bekend of het rapport in IFS is uitgevoerd. Kijk in IFS naar het rapport voordat u het opnieuw probeert.",
+    nextDownload: "Download het bestand",
+    nextHowToImport: "Zo importeert u het in IFS",
+    nextWarnings: "Let op",
     themeLabel: "Thema",
     themeLight: "Licht",
     themeDark: "Donker",

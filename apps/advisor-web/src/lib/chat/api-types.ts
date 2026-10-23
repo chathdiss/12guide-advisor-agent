@@ -1,5 +1,5 @@
 import type { Lang } from "../i18n";
-import type { Source, Tier } from "./types";
+import type { ChatKind, Source, Tier } from "./types";
 
 export const MAX_ATTACHMENTS = 4;
 export const MAX_IMAGE_BASE64_CHARS = 6_000_000;
@@ -25,6 +25,8 @@ export type ChatRequest = {
   attachments?: AttachmentPayload[];
   // true: do not return a saved answer, ask the advisor again
   fresh?: boolean;
+  // the tab that asks: Quick Reports always uses the quick report workflow, Advisor Chat never does
+  mode?: ChatKind;
   // previous turns, oldest first, so the agent has conversation context
   history: { role: "user" | "assistant"; content: string }[];
 };

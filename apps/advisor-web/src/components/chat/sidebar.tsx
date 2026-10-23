@@ -16,6 +16,7 @@ type Props = {
   onNew: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  newLabel?: string;
 };
 
 type GroupKey = "groupToday" | "groupYesterday" | "groupWeek" | "groupOlder";
@@ -30,7 +31,7 @@ function groupFor(updatedAt: number, startOfToday: number): GroupKey {
   return "groupOlder";
 }
 
-export function Sidebar({ chats, activeId, onSelect, onNew, onDelete, onRename }: Props) {
+export function Sidebar({ chats, activeId, onSelect, onNew, onDelete, onRename, newLabel }: Props) {
   const { t } = useLanguage();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
@@ -70,7 +71,7 @@ export function Sidebar({ chats, activeId, onSelect, onNew, onDelete, onRename }
 
       <div className="px-3 pb-2">
         <Button className="w-full justify-start gap-2" onClick={onNew}>
-          <Plus className="size-4" /> {t.newChat}
+          <Plus className="size-4" /> {newLabel ?? t.newChat}
         </Button>
       </div>
 

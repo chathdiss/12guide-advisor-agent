@@ -26,6 +26,23 @@ export function shortType(datatype) {
 const normalise = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const more = (total, max) => (total > max ? `, and ${total - max} more` : "");
 
+// The columns as entries. A column and its _DB twin (the database value of an enumeration column) are one entry, marked +DB, and the system
+// columns that IFS adds to every view are named once. Every column is still there: only the repetition is gone.
+export function columnEntries(columns) {
+  const names = new Set(columns.map((c) => c.column_name));
+  const entries = [];
+  const system = [];
+  for (const c of columns) {
+    if (!shortType(c.datatype)) {
+      system.push(c.column_name);
+      continue;
+    }
+    if (c.column_name.endsWith("_DB") && names.has(c.column_name.slice(0, -3))) continue;
+    entries.push(columnText(c) + (names.has(`${c.column_name}_DB`) ? " +DB" : ""));
+  }
+  return { entries, system };
+}
+
 function columnText(c) {
   const parts = [];
   const type = shortType(c.datatype);
@@ -70,8 +87,9 @@ export function luSummary({ lu, columns = [], otherViews = [], children = [], si
   if (columns.length > 0) {
     const keys = columns.filter((c) => c.type_flag === "K" || c.type_flag === "P").map((c) => c.column_name);
     lines.push(`Key columns: ${keys.join(", ") || "none listed"}.`);
-    const shown = columns.slice(0, MAX_COLUMNS);
-    lines.push(`All ${columns.length} columns of the view ${lu.base_view} (type, prompt, flags): ${shown.map(columnText).join(", ")}${more(columns.length, MAX_COLUMNS)}.`);
+    const { entries, system } = columnEntries(columns);
+    lines.push(`All ${columns.length} columns of the view ${lu.base_view} (type, prompt, flags; +DB: a column with the suffix _DB holds the database value of the enumeration and is not listed again): ${entries.slice(0, MAX_COLUMNS).join(", ")}${more(entries.length, MAX_COLUMNS)}.`);
+    if (system.length > 0) lines.push(`System columns that IFS adds: ${system.join(", ")}.`);
 
     const joins = columns.filter((c) => c.column_reference && c.type_flag !== "P");
     if (joins.length > 0) {
@@ -90,6 +108,15 @@ export function luSummary({ lu, columns = [], otherViews = [], children = [], si
     lines.push(`Other views of this logical unit: ${otherViews.slice(0, MAX_LIST).join(", ")}${more(otherViews.length, MAX_LIST)}.`);
   }
   if (similar.length > 0) lines.push(`Other logical units whose name starts like this one: ${similar.slice(0, 20).join(", ")}.`);
+  return lines.join("\n");
+}
+
+// A view of the dictionary that is not the base view of an entity (INVOICE_LEDGER_ITEM_CU_QRY, a query view): its columns
+export function viewSummary({ view, luName = "", version = "", columns = [] }) {
+  const { entries, system } = columnEntries(columns);
+  const lines = [`View ${view}${luName ? ` of the logical unit ${luName}` : ""} (a view that is not the base view of an entity), from the IFS data dictionary (${version}).`];
+  lines.push(`All ${columns.length} columns of the view (type, prompt, flags; +DB: a column with the suffix _DB holds the database value of the enumeration and is not listed again): ${entries.slice(0, MAX_COLUMNS).join(", ")}${more(entries.length, MAX_COLUMNS)}.`);
+  if (system.length > 0) lines.push(`System columns that IFS adds: ${system.join(", ")}.`);
   return lines.join("\n");
 }
 

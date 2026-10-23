@@ -8,13 +8,14 @@
 const KEEP_MS = 20 * 60 * 1000; // a run that never ended (n8n died) is forgotten after this long
 const keyOf = (p) => `${p.path}#${p.startLine}-${p.endLine}`;
 
-export function createEvidence({ maxPassages = 60, maxToolCalls = 6, maxExtraChars = 120_000 } = {}) {
+export function createEvidence({ maxPassages = 60, maxToolCalls = 6, maxExtraChars = 120_000, reservedCalls = 0 } = {}) {
   const runs = new Map();
 
   return {
     // `passages` are the ones sent with the question (ids 1..n)
-    start(id, passages = []) {
-      const run = { passages: [...passages], keys: new Map(passages.map((p, i) => [keyOf(p), i + 1])), calls: 0, extraChars: 0, timer: null };
+    // `quickReport`: the last `reservedCalls` tool calls are kept for the review tool (see quickreport.js)
+    start(id, passages = [], { quickReport = false } = {}) {
+      const run = { passages: [...passages], keys: new Map(passages.map((p, i) => [keyOf(p), i + 1])), calls: 0, extraChars: 0, timer: null, quickReport, artifacts: null, reviews: 0 };
       run.timer = setTimeout(() => runs.delete(id), KEEP_MS);
       run.timer.unref?.();
       runs.set(id, run);
@@ -29,6 +30,23 @@ export function createEvidence({ maxPassages = 60, maxToolCalls = 6, maxExtraCha
       run.calls++;
       return true;
     },
+
+    // true when this call must be refused because the calls that are left are kept for the review tool
+    reserved(id, tool) {
+      const run = runs.get(id);
+      if (!run || !run.quickReport || tool === "review_quick_report") return false;
+      return maxToolCalls - run.calls <= reservedCalls;
+    },
+
+    // the review page and the design of the last review: the backend puts them into the answer
+    setArtifacts(id, artifacts) {
+      const run = runs.get(id);
+      if (!run) return;
+      run.artifacts = artifacts;
+      run.reviews++;
+    },
+    artifacts: (id) => runs.get(id)?.artifacts ?? null,
+    reviews: (id) => runs.get(id)?.reviews ?? 0,
 
     callsLeft: (id) => Math.max(0, maxToolCalls - (runs.get(id)?.calls ?? maxToolCalls)),
 

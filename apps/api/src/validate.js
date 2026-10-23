@@ -1,4 +1,5 @@
 import { stripCitations } from "./cite.js";
+import { compactDesignMessage } from "./quickreport.js";
 
 // Checks a chat request from the web app before anything is sent on to the agent.
 // The limits match the web app's own (apps/advisor-web/src/lib/chat/api-types.ts).
@@ -45,6 +46,9 @@ export function validateChatRequest(body) {
       history: cleanHistory(body.history),
       // true when the consultant asks for a new answer instead of a saved one
       fresh: body.fresh === true,
+      // the tab of the web app that asks: the quick report workflow is used in "quickReport" only, and never in "advisor". Without it (an older
+      // client) the request itself decides.
+      mode: body.mode === "quickReport" || body.mode === "advisor" ? body.mode : "",
     },
   };
 }
@@ -75,7 +79,12 @@ function cleanHistory(input) {
     .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
     .slice(-MAX_HISTORY_MESSAGES)
     // the [n] markers of an earlier answer belong to the sources of that question: the agent must not see them next to new sources
-    .map((m) => ({ role: m.role, content: (m.role === "assistant" ? stripCitations(m.content) : m.content).slice(0, MAX_HISTORY_CHARS) }));
+    .map((m) => {
+      const content = m.role === "assistant" ? stripCitations(m.content) : m.content;
+      // an answer with a quick report design is kept as that design, whole (a change request works from it); see quickreport.js
+      const design = m.role === "assistant" ? compactDesignMessage(content) : null;
+      return { role: m.role, content: design ?? content.slice(0, MAX_HISTORY_CHARS) };
+    });
 }
 
 // Lines of the prompt that are meant for the agent only (see the Build prompt node of the workflow). A model sometimes copies
@@ -100,7 +109,23 @@ export function cleanAgentResponse(data) {
     tier: ["lite", "full", "super"].includes(data.tier) ? data.tier : undefined,
     tierReason: typeof data.tierReason === "string" ? data.tierReason : undefined,
     followUps,
+    // the execution of n8n that made the answer (digits only): the server may read the token counts from it afterwards
+    ...(/^\d{1,15}$/.test(String(data.executionId ?? "")) ? { executionId: String(data.executionId) } : {}),
+    // what the model provider counted for this answer, when n8n passes it on (see readUsage); the server logs it and does not send it on
+    ...(readUsage(data.usage) ? { usage: readUsage(data.usage) } : {}),
   };
+}
+
+// The token counts that the provider reported (the Format response node of the workflow collects them from the model node). Only whole,
+// non-negative numbers are kept; null when there are none. Nothing is estimated here.
+export function readUsage(u) {
+  if (!u || typeof u !== "object") return null;
+  const out = {};
+  for (const key of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheCreationTokens", "modelCalls"]) {
+    const n = u[key];
+    if (Number.isSafeInteger(n) && n >= 0) out[key] = n;
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }
 
 function fail(status, code, error) {

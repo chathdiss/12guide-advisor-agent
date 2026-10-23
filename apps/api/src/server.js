@@ -4,6 +4,7 @@ import { askAgent } from "./agent.js";
 import { estimateSaved, reusable } from "./answer-cache.js";
 import { buildCitations, repairCitations } from "./cite.js";
 import { createEvidence } from "./evidence.js";
+import { QUICK_REPORT_PASSAGES, RESERVED_REVIEW_CALLS, fillPlaceholders, isQuickReportRequest, limitIntroduction } from "./quickreport.js";
 import { createRateLimiter } from "./rate-limit.js";
 import { formatToolResult } from "./tools.js";
 import { createPendingAnswers } from "./pending.js";
@@ -22,7 +23,7 @@ export function createApp(config) {
   const maxBodyBytes = config.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const limiter = createRateLimiter({ limit: config.rateLimitPerMinute ?? 30 });
   const pending = createPendingAnswers();
-  const evidence = createEvidence({ maxToolCalls: config.maxToolCalls ?? 6 });
+  const evidence = createEvidence({ maxToolCalls: config.maxToolCalls ?? 6, reservedCalls: RESERVED_REVIEW_CALLS });
   const publicUrl = String(config.publicUrl ?? "").trim().replace(/\/+$/, "");
 
   // A complete answer takes a minute or more, longer than a website host (such as Netlify) keeps a forwarded request
@@ -53,6 +54,18 @@ export function createApp(config) {
     if (path === "/api/chat") {
       if (req.method !== "POST") return sendJson(res, 405, { error: "Use POST.", code: "invalid_request" });
       return handleChat(req, res);
+    }
+
+    // The next steps of a reviewed quick report design (see quickreport-actions.js): "check" is read-only, "run" only runs the option that the
+    // consultant chose, for the design that was approved
+    if (path === "/api/quick-report/check" || path === "/api/quick-report/run" || path === "/api/quick-report/test") {
+      if (req.method !== "POST") return sendJson(res, 405, { error: "Use POST.", code: "invalid_request" });
+      if (!config.quickReports) return sendJson(res, 503, { error: "The quick report next steps are not available on this server.", code: "not_configured" });
+      if (!limiter.allow(clientAddress(req))) return sendJson(res, 429, { error: "Too many requests. Please wait a moment.", code: "rate_limited" });
+      const body = await readJson(req, maxBodyBytes);
+      if (!body.ok) return sendJson(res, body.status, { error: body.error, code: body.code });
+      const done = path.endsWith("/check") ? await config.quickReports.prepare(body.value) : path.endsWith("/test") ? await config.quickReports.test(body.value) : await config.quickReports.run(body.value);
+      return sendJson(res, done.status, done.body);
     }
 
     // n8n posts a finished answer here (see pending.js); only n8n knows the key and the one-time id
@@ -162,8 +175,12 @@ export function createApp(config) {
       res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
       res.end(text);
     };
-    const run = { search_knowledge: config.tools.search, find_files: config.tools.findFiles, describe_entity: config.tools.describeEntity, find_columns: config.tools.findColumns, read_document: config.tools.readDocument }[tool];
+    const run = { search_knowledge: config.tools.search, find_files: config.tools.findFiles, describe_entity: config.tools.describeEntity, find_columns: config.tools.findColumns, read_document: config.tools.readDocument, review_quick_report: config.tools.reviewQuickReport }[tool];
     if (!run) return sendJson(res, 404, { error: "Unknown tool.", code: "invalid_request" });
+    // a quick report request: the last calls are kept for the review of the design, so that it is always reviewed (quickreport.js)
+    if (evidence.reserved(runId, tool)) {
+      return reply("<tool_note>The calls that are left are kept for review_quick_report. Do not look anything up now: write or correct the design from what you have, and call review_quick_report.</tool_note>");
+    }
     if (!evidence.useCall(runId)) {
       return reply("<tool_note>No tool calls left. Write the answer now from the sources you already have, and say plainly what they do not cover.</tool_note>");
     }
@@ -177,7 +194,13 @@ export function createApp(config) {
         path: args.path,
         fromLine: args.from_line,
         toLine: args.to_line,
+        designJson: args.design_json,
       });
+      // a tool that makes no sources (the quick report review) answers { text }: plain text for the agent, nothing to cite
+      if (typeof out?.text === "string") {
+        if (out.artifacts) evidence.setArtifacts(runId, out.artifacts);
+        return reply(`${out.text}\n\n<tool_note>Tool calls left: ${evidence.callsLeft(runId)}.</tool_note>`);
+      }
       // a tool returns the passages, or { passages, note } when it also has something to say (no such entity ...)
       const found = Array.isArray(out) ? out : out?.passages ?? [];
       const passages = evidence.add(runId, found);
@@ -213,7 +236,7 @@ export function createApp(config) {
     // An answer that a consultant rated with a thumbs up, for the same question, customer, IFS version and language:
     // it is returned as it is, before anything that calls an AI model (the keyword rewrite and the agent). Any
     // problem with the memory just means "no saved answer".
-    const askedCached = config.memory?.findCachedAnswer && !checked.value.fresh && reusable(checked.value);
+    const askedCached = config.memory?.findCachedAnswer && !checked.value.fresh && checked.value.mode !== "quickReport" && reusable(checked.value);
     if (askedCached) {
       const saved = await config.memory
         .findCachedAnswer({ question: checked.value.question, history: checked.value.history, customer: checked.value.customer, ifsVersion: checked.value.ifsVersion, language: checked.value.language })
@@ -235,9 +258,13 @@ export function createApp(config) {
       config.memory.recordCacheEvent?.({ outcome: "miss" });
     }
 
+    // A specification for a quick report, or a change to its design: the workflow of packages/quick-reports. Only then are fewer passages sent
+    // (the design comes from the data dictionary, which the agent looks up itself), calls are kept for the review, and n8n adds the instructions.
+    const quickReport = checked.value.mode === "quickReport" ? true : checked.value.mode === "advisor" ? false : isQuickReportRequest(checked.value);
+
     // Search the approved sources first: the agent may only answer from what is found here
     const knowledge = config.retrieve
-      ? await config.retrieve(checked.value.question, checked.value.history)
+      ? await (quickReport ? config.retrieve(checked.value.question, checked.value.history, { limit: QUICK_REPORT_PASSAGES }) : config.retrieve(checked.value.question, checked.value.history))
       : { status: "unavailable", passages: [] };
 
     // Lessons that a reviewer approved for this customer and IFS version; a failure here never stops an answer
@@ -255,7 +282,7 @@ export function createApp(config) {
     // here while the browser's request stays open. A workflow that answers at once works as before.
     // The evidence of this question (see evidence.js) holds the passages sent now and those the agent finds with its tools
     const requestId = randomUUID();
-    evidence.start(requestId, knowledge.passages);
+    evidence.start(requestId, knowledge.passages, { quickReport });
     const waiter = publicUrl ? pending.expect(requestId) : null;
     let result = await askAgent(
       {
@@ -264,6 +291,7 @@ export function createApp(config) {
         passages: knowledge.passages,
         lessons,
         reports,
+        ...(quickReport ? { quickReport: true } : {}),
         ...(publicUrl ? { callbackUrl: `${publicUrl}/api/internal/answer/${requestId}` } : {}),
         // where the agent's search tools are; without it the agent works with the passages above only
         ...(publicUrl && config.tools && knowledge.status === "ok" ? { toolsUrl: `${publicUrl}/api/internal/tools/${requestId}`, toolCalls: config.maxToolCalls ?? 6 } : {}),
@@ -298,12 +326,17 @@ export function createApp(config) {
     // (the passages are those sent with the question and those the agent found with its tools)
     const passages = evidence.passages(requestId);
     const used = evidence.stats(requestId);
+    const reviews = evidence.reviews(requestId);
+    const artifacts = quickReport ? evidence.artifacts(requestId) : null;
     evidence.end(requestId);
     const repair = repairCitations(result.value.answer, passages);
     const cited = buildCitations(repair.answer, passages);
+    // what the provider counted (see readUsage): logged, and not sent to the browser
+    const { usage, executionId, ...answered } = result.value;
     const value = {
-      ...result.value,
-      answer: cited.answer,
+      ...answered,
+      // the review page and the design that the agent reviewed are put in exactly as the tool made them; after the markers of the sources are checked
+      answer: quickReport ? fillPlaceholders(limitIntroduction(cited.answer), artifacts) : cited.answer,
       sources: cited.sources,
       // so the page can show that confirmed lessons were available for this answer
       ...(lessons.length > 0 ? { lessons: lessons.map((l) => ({ id: l.id, correction: l.correction })) } : {}),
@@ -312,6 +345,7 @@ export function createApp(config) {
     // Only metadata is logged, never the questions or answers
     log({
       status: 200,
+      requestId,
       tier: value.tier,
       knowledge: knowledge.status,
       found: knowledge.passages.length,
@@ -320,9 +354,18 @@ export function createApp(config) {
       cited: value.sources.length,
       repaired: repair.repaired,
       unverified: repair.unverified,
+      ...(quickReport ? { quickReport: true, reviews } : {}),
+      // token counts as the provider reported them: null when n8n did not pass them on. Numbers only; they are never estimated.
+      usage: usage ?? null,
+      ...(knowledge.usage ? { rewriteUsage: knowledge.usage } : {}),
       ms: Date.now() - started,
     });
-    return sendJson(res, 200, value);
+    sendJson(res, 200, value);
+    // The counts are in the stored execution once it has finished, which is after this answer: read them then, and log them with the same requestId
+    if (!usage && executionId && config.usageReader) {
+      config.usageReader(executionId).then((counted) => log({ event: "usage", requestId, usage: counted ?? null }), () => {});
+    }
+    return;
   }
 
   server.on("close", () => limiter.stop());

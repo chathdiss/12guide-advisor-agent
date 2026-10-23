@@ -11,9 +11,10 @@ import { cn } from "@/lib/utils";
 type Props = {
   onSend: (text: string, attachments: PendingAttachment[]) => void;
   disabled: boolean;
+  placeholder?: string;
 };
 
-export function Composer({ onSend, disabled }: Props) {
+export function Composer({ onSend, disabled, placeholder }: Props) {
   const { t } = useLanguage();
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
@@ -125,7 +126,7 @@ export function Composer({ onSend, disabled }: Props) {
             ref={ref}
             value={value}
             rows={1}
-            placeholder={t.placeholder}
+            placeholder={placeholder ?? t.placeholder}
             className="max-h-48 min-h-9 flex-1 resize-none bg-transparent px-1 py-2 text-sm outline-none"
             onChange={(e) => {
               setValue(e.target.value);

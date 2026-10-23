@@ -145,23 +145,39 @@ export function buildPassages(found, full = new Map(), { budget = MAX_TOTAL_CHAR
 // `rewrite` (optional) turns the question into keywords first; when it gives nothing, the search
 // uses the words of the question as before. `loadFull` (optional) gives the whole text of web
 // documents (community topics, blog posts) so the agent sees the complete discussion.
-export function createRetriever({ db, search, rewrite = null, loadFull = null, findTitles = null, findNames = null, findApi = null, limit = 12 }) {
-  return async (question, history) => {
-    try {
+// A connection that the database closed while it was idle (or that was lost when the computer slept) fails once, and a new one works. A search that
+// was cut off because it took too long is not this: trying it again would only take as long again.
+const CONNECTION_ERROR = /(connection terminated|connection (?:was )?(?:reset|closed|refused)|server closed the connection|ECONNRESET|ECONNREFUSED|EPIPE|timeout exceeded when trying to connect)/i;
+
+export function createRetriever({ db, search, rewrite = null, loadFull = null, findTitles = null, findNames = null, findApi = null, limit = 12, retryDelayMs = 600 }) {
+  // options.limit: how many passages (default: `limit`). The result has `usage` (the provider's token counts of the keyword rewrite) when there was one.
+  return async (question, history, options = {}) => {
+    const usage = { inputTokens: 0, outputTokens: 0, calls: 0 };
+    const withUsage = (r) => (usage.calls > 0 ? { ...r, usage } : r);
+    const attempt = async () => {
       const query = retrievalQuery(question, history);
       // a short question gets the previous one in front of it; "what is 2+2" after an IFS question must
       // still be recognised as off-topic, so it is judged on its own first
-      if (rewrite && query !== question && (await rewrite(question))?.offTopic) return { status: "ok", passages: [] };
-      const rewritten = rewrite ? await rewrite(query) : null;
-      if (rewritten?.offTopic) return { status: "ok", passages: [] };
-      const found = await searchBoth(search, db, query, limit, rewritten?.keywords ?? null, findTitles, findNames, findApi);
+      if (rewrite && query !== question && (await rewrite(question, usage))?.offTopic) return withUsage({ status: "ok", passages: [] });
+      const rewritten = rewrite ? await rewrite(query, usage) : null;
+      if (rewritten?.offTopic) return withUsage({ status: "ok", passages: [] });
+      const found = await searchBoth(search, db, query, options.limit ?? limit, rewritten?.keywords ?? null, findTitles, findNames, findApi);
       const full = loadFull ? await loadFull(db, found.filter((r) => r.url).map((r) => r.path)) : new Map();
 
       const passages = buildPassages(found, full);
-      return { status: "ok", passages };
+      return withUsage({ status: "ok", passages });
+    };
+    try {
+      try {
+        return await attempt();
+      } catch (err) {
+        if (!CONNECTION_ERROR.test(String(err?.message ?? err))) throw err;
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        return await attempt();
+      }
     } catch (err) {
       console.error(JSON.stringify({ time: new Date().toISOString(), knowledge: "unavailable", error: String(err?.message ?? err) }));
-      return { status: "unavailable", passages: [] };
+      return withUsage({ status: "unavailable", passages: [] });
     }
   };
 }
